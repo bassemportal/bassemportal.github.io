@@ -1,0 +1,21 @@
+{
+  "projectId": "72696058",
+  "functions": {
+    "api-device-register": {
+      "hasChanged": false,
+      "hash": "8647395ba073224c4277061b93e7fb22d9706809c3af6009ccb19b49149b9232"
+    },
+    "api-device-resolve": {
+      "hasChanged": false,
+      "hash": "d68838e8e637e98b5d1e60c714d92c78c01deb0d9b6b4ce93e56aed78d37bbb0"
+    },
+    "api-heartbeat": {
+      "hasChanged": false,
+      "hash": "5cc419b3bcfd913bed6b651cbe3eb0ff8baf95bc5deb99e338f8c6c4a88f9d5b"
+    },
+    "api-sports-feed": {
+      "hasChanged": false,
+      "hash": "b3c677acb4a52b5944ee2b93357bb90a010a37f216bf2dc668dbca38ed4944e9"
+    }
+  }
+}

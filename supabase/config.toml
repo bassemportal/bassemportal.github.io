@@ -1,0 +1,11 @@
+[functions.api-device-register]
+verify_jwt = false
+
+[functions.api-device-resolve]
+verify_jwt = false
+
+[functions.api-heartbeat]
+verify_jwt = false
+
+[functions.api-sports-feed]
+verify_jwt = false
