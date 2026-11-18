@@ -53,10 +53,14 @@ function renderAll(){
  renderPlaylists();renderDevices();renderServers();renderAssignments();
 }
 function table(headers,rows){if(!rows.length)return '<div class="empty">No records found.</div>';return `<table><thead><tr>${headers.map(h=>`<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table>`;}
+function playlistParts(p){
+ try{const raw=String(p.url||"");const payload=raw.startsWith("s:")?raw.slice(2):raw;const obj=JSON.parse(payload);return {host:String(obj.s||""),mac:String(obj.m||"").replace(/[^0-9A-Fa-f]/g,"").toUpperCase(),obj};}
+ catch{return {host:"",mac:"",obj:null};}
+}
 function renderPlaylists(){
  const q=($("playlistTableSearch")?.value||"").toLowerCase();
- const rows=state.playlists.filter(p=>(p.name+" "+p.url).toLowerCase().includes(q)).map(p=>[esc(p.name),`<span class="pill">${esc(p.id)}</span>`,`<span title="${esc(p.url)}">${esc(p.url.slice(0,65))}${p.url.length>65?"…":""}</span>`,`<div class="table-actions"><button class="btn" data-edit-playlist="${p.id}">Edit</button><button class="btn" data-delete-playlist="${p.id}">Delete</button></div>`]);
- $("playlistTable").innerHTML=table(["Name","ID","URL","Actions"],rows);
+ const rows=state.playlists.filter(p=>{const parts=playlistParts(p);return (p.name+" "+parts.host+" "+parts.mac).toLowerCase().includes(q);}).map(p=>{const parts=playlistParts(p);return [esc(p.name),esc(parts.host||"—"),esc(parts.mac||"—"),`<div class="table-actions"><button class="btn" data-edit-playlist="${p.id}">Edit</button><button class="btn" data-delete-playlist="${p.id}">Delete</button></div>`];});
+ $("playlistTable").innerHTML=table(["Name","Host","MAC","Actions"],rows);
 }
 function renderDevices(){
  const q=($("deviceTableSearch")?.value||"").toLowerCase();
@@ -114,7 +118,11 @@ async function deleteDevice(id){const d=state.devices.find(x=>String(x.id)===Str
  let r=await state.sb.from("playlist_assignments").delete().eq("device_mac",d.mac);if(r.error)throw r.error;r=await state.sb.from("mac_devices").delete().eq("id",id);if(r.error)throw r.error;await loadData();msg("Device and its assignments deleted.");
  }catch(e){fail(e);}}
 async function deletePlaylist(id){const p=state.playlists.find(x=>String(x.id)===String(id));if(!p||!confirm(`Delete playlist "${p.name}"?`))return;try{const {error}=await state.sb.from("playlists").delete().eq("id",id);if(error)throw error;await loadData();msg("Playlist deleted.");}catch(e){fail(e);}}
-function editPlaylist(id){const p=state.playlists.find(x=>String(x.id)===String(id));if(!p)return;openModal("Edit playlist",`<form id="editPlaylistForm" class="form-grid"><label class="span-2">Name<input id="editPName" required value="${esc(p.name)}"></label><label class="span-2">URL / playlist data<textarea id="editPUrl" rows="5" required>${esc(p.url)}</textarea></label><div class="span-2"><button class="btn primary">Save changes</button></div></form>`);$("editPlaylistForm").onsubmit=async e=>{e.preventDefault();try{const {error}=await state.sb.from("playlists").update({name:$("editPName").value.trim(),url:$("editPUrl").value.trim()}).eq("id",id);if(error)throw error;closeModal();await loadData();msg("Playlist updated.");}catch(e){fail(e);}};}
+function editPlaylist(id){
+ const p=state.playlists.find(x=>String(x.id)===String(id));if(!p)return;const parts=playlistParts(p);
+ openModal("Edit playlist",`<form id="editPlaylistForm" class="form-grid"><label class="span-2">Name<input id="editPName" required value="${esc(p.name)}"></label><label class="span-2">Host<input id="editPHost" required value="${esc(parts.host)}"></label><label class="span-2">MAC<input id="editPMac" required value="${esc(parts.mac)}" maxlength="17"></label><p class="muted span-2">Only name, host and MAC are editable here. Other playlist configuration is preserved.</p><div class="span-2"><button class="btn primary">Save changes</button></div></form>`);
+ $("editPlaylistForm").onsubmit=async e=>{e.preventDefault();try{if(!parts.obj)throw Error("Playlist data format could not be parsed; refusing to overwrite it.");const mac=normalizeMac($("editPMac").value);if(!validMac(mac))throw Error("Enter a valid 12-character MAC address.");parts.obj.s=$("editPHost").value.trim();parts.obj.m=colonMac(mac);const {error}=await state.sb.from("playlists").update({name:$("editPName").value.trim(),url:"s:"+JSON.stringify(parts.obj)}).eq("id",id);if(error)throw error;closeModal();await loadData();msg("Playlist updated.");}catch(e){fail(e);}};
+}
 function editServer(id){const s=state.servers.find(x=>String(x.id)===String(id));if(!s)return;$("serverId").value=s.id;$("serverName").value=s.name;$("serverUrl").value=s.url;$("serverType").value=s.type;$("serverSort").value=s.sort_order;$("serverSubmit").textContent="Save server";$("serverCancel").classList.remove("hidden");showPage("servers");}
 async function saveServer(e){e.preventDefault();try{const id=$("serverId").value;const row={name:$("serverName").value.trim(),url:$("serverUrl").value.trim(),type:$("serverType").value,sort_order:Number($("serverSort").value||0)};const r=id?await state.sb.from("servers").update(row).eq("id",id):await state.sb.from("servers").insert(row);if(r.error)throw r.error;$("serverForm").reset();$("serverId").value="";$("serverSort").value="0";$("serverSubmit").textContent="Add server";$("serverCancel").classList.add("hidden");await loadData();msg(id?"Server updated.":"Server added.");}catch(e){fail(e);}}
 async function actionClick(e){
