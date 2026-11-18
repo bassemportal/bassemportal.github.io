@@ -2,7 +2,7 @@
 "use strict";
 const cfg=window.BASSEM_CONFIG||{};
 const $=id=>document.getElementById(id);
-const state={sb:null,user:null,profile:null,servers:[],playlists:[],devices:[],assignments:[],dashboardUsers:[],page:"overview"};
+const state={sb:null,user:null,profile:null,servers:[],playlists:[],devices:[],assignments:[],dashboardUsers:[],page:"overview",selectedPlaylistIds:new Set(),selectedDeviceMacs:new Set(),playlistAnchor:null};
 const META={
  is_vod:0,position:null,tvg_urls:"",tvg_shift:0,is_enabled:1,user_agent:null,auto_update:0,include_vod:1,is_expanded:0,
  movie_count:0,catchup_type:2,series_count:0,catchup_hours:72,channel_count:0,
@@ -74,15 +74,18 @@ function renderServers(){
 function renderAssignments(){
  if(!$("assignPlaylists"))return;
  const pq=($("playlistSearch")?.value||"").toLowerCase(),dq=($("deviceSearch")?.value||"").toLowerCase();
- const psel=new Set([...document.querySelectorAll("[name=ap]:checked")].map(x=>x.value)),dsel=new Set([...document.querySelectorAll("[name=ad]:checked")].map(x=>x.value));
- $("assignPlaylists").innerHTML=state.playlists.filter(p=>p.name.toLowerCase().includes(pq)).map(p=>`<label class="check-row"><input type="checkbox" name="ap" value="${p.id}" ${psel.has(String(p.id))?"checked":""}><span>${esc(p.name)}</span></label>`).join("")||'<div class=empty>No playlists</div>';
- $("assignDevices").innerHTML=state.devices.filter(d=>(d.mac+" "+d.name).toLowerCase().includes(dq)).map(d=>`<label class="check-row"><input type="checkbox" name="ad" value="${esc(d.mac)}" ${dsel.has(d.mac)?"checked":""}><span>${esc(d.name||d.mac)} <small>${esc(d.mac)}</small></span></label>`).join("")||'<div class=empty>No devices</div>';
- const np=document.querySelectorAll("[name=ap]:checked").length,nd=document.querySelectorAll("[name=ad]:checked").length;
+ const visiblePlaylists=state.playlists.filter(p=>p.name.toLowerCase().includes(pq));
+ const visibleDevices=state.devices.filter(d=>(d.mac+" "+d.name).toLowerCase().includes(dq));
+ $("assignPlaylists").innerHTML=visiblePlaylists.map(p=>`<label class="check-row"><input type="checkbox" name="ap" value="${p.id}" ${state.selectedPlaylistIds.has(String(p.id))?"checked":""}><span>${esc(p.name)}</span></label>`).join("")||'<div class=empty>No playlists</div>';
+ $("assignDevices").innerHTML=visibleDevices.map(d=>`<label class="check-row"><input type="checkbox" name="ad" value="${esc(d.mac)}" ${state.selectedDeviceMacs.has(d.mac)?"checked":""}><span>${esc(d.name||d.mac)} <small>${esc(d.mac)}</small></span></label>`).join("")||'<div class=empty>No devices</div>';
+ const allVisible=visiblePlaylists.length>0&&visiblePlaylists.every(p=>state.selectedPlaylistIds.has(String(p.id)));
+ const selectAll=$("selectAllPlaylists");if(selectAll){selectAll.checked=allVisible;selectAll.indeterminate=!allVisible&&visiblePlaylists.some(p=>state.selectedPlaylistIds.has(String(p.id)));}
+ const np=state.selectedPlaylistIds.size,nd=state.selectedDeviceMacs.size;
  $("assignmentCount").textContent=`${np} playlists × ${nd} devices = ${np*nd} possible links`;
  const lookup=new Map(state.playlists.map(p=>[String(p.id),p.name]));
  $("assignmentTable").innerHTML=table(["Device MAC","Playlist","Assigned"],state.assignments.map(a=>[esc(a.device_mac),esc(lookup.get(String(a.playlist_id))||("#"+a.playlist_id)),esc(a.assigned_at||"—")]));
 }
-function refreshSelectionCount(){const np=document.querySelectorAll("[name=ap]:checked").length,nd=document.querySelectorAll("[name=ad]:checked").length;$("assignmentCount").textContent=`${np} playlists × ${nd} devices = ${np*nd} possible links`;}
+function refreshSelectionCount(){const np=state.selectedPlaylistIds.size,nd=state.selectedDeviceMacs.size;$("assignmentCount").textContent=`${np} playlists × ${nd} devices = ${np*nd} possible links`;const visible=state.playlists.filter(p=>p.name.toLowerCase().includes(($("playlistSearch").value||"").toLowerCase()));const all=visible.length>0&&visible.every(p=>state.selectedPlaylistIds.has(String(p.id)));const ctl=$("selectAllPlaylists");if(ctl){ctl.checked=all;ctl.indeterminate=!all&&visible.some(p=>state.selectedPlaylistIds.has(String(p.id)));}}
 function openModal(title,html){$("modalTitle").textContent=title;$("modalBody").innerHTML=html;$("modal").classList.remove("hidden");}
 function closeModal(){$("modal").classList.add("hidden");}
 async function createPlaylists(e){
@@ -110,9 +113,9 @@ async function addDevice(e){
  const {error}=await state.sb.from("mac_devices").insert(row);if(error)throw error;$("deviceForm").reset();await loadData();msg("Device added.");
  }catch(e){fail(e);}
 }
-async function assignBulk(){try{const ps=[...document.querySelectorAll("[name=ap]:checked")].map(x=>Number(x.value)),ds=[...document.querySelectorAll("[name=ad]:checked")].map(x=>x.value);if(!ps.length||!ds.length)throw Error("Select at least one playlist and one device.");
+async function assignBulk(){try{const ps=[...state.selectedPlaylistIds].map(Number),ds=[...state.selectedDeviceMacs];if(!ps.length||!ds.length)throw Error("Select at least one playlist and one device.");
  const links=[];ps.forEach(p=>ds.forEach(d=>links.push({device_mac:d,playlist_id:p})));
- const {error}=await state.sb.from("playlist_assignments").upsert(links,{onConflict:"device_mac,playlist_id",ignoreDuplicates:true});if(error)throw error;await loadData();msg(`Processed ${links.length} assignment combination(s). Existing assignments were left unchanged.`);
+ const {error}=await state.sb.from("playlist_assignments").upsert(links,{onConflict:"device_mac,playlist_id",ignoreDuplicates:true});if(error)throw error;state.selectedPlaylistIds.clear();state.selectedDeviceMacs.clear();state.playlistAnchor=null;await loadData();msg(`Processed ${links.length} assignment combination(s). Existing assignments were left unchanged.`);
  }catch(e){fail(e);}}
 async function deleteDevice(id){const d=state.devices.find(x=>String(x.id)===String(id));if(!d||!confirm(`Delete device ${d.mac}? Its playlist assignments will also be deleted.`))return;try{
  let r=await state.sb.from("playlist_assignments").delete().eq("device_mac",d.mac);if(r.error)throw r.error;r=await state.sb.from("mac_devices").delete().eq("id",id);if(r.error)throw r.error;await loadData();msg("Device and its assignments deleted.");
@@ -229,7 +232,10 @@ $("serverCancel").onclick=()=>{$("serverForm").reset();$("serverId").value="";$(
 $("modalClose").onclick=closeModal;$("modal").onclick=e=>{if(e.target===$("modal"))closeModal();};
 ["playlistSearch","deviceSearch"].forEach(id=>$(id).addEventListener("input",renderAssignments));
 ["playlistTableSearch","deviceTableSearch"].forEach(id=>$(id).addEventListener("input",id==="playlistTableSearch"?renderPlaylists:renderDevices));
-$("assignPlaylists").addEventListener("change",refreshSelectionCount);$("assignDevices").addEventListener("change",refreshSelectionCount);
+$("assignPlaylists").addEventListener("click",e=>{const box=e.target.closest('input[name="ap"]');if(!box)return;const visible=[...$("assignPlaylists").querySelectorAll('input[name="ap"]')];const index=visible.indexOf(box);if(e.shiftKey&&state.playlistAnchor!==null){e.preventDefault();const start=Math.min(state.playlistAnchor,index),end=Math.max(state.playlistAnchor,index),target=!state.selectedPlaylistIds.has(box.value);visible.slice(start,end+1).forEach(el=>{if(target)state.selectedPlaylistIds.add(el.value);else state.selectedPlaylistIds.delete(el.value);el.checked=target;});refreshSelectionCount();}else{state.playlistAnchor=index;}});
+$("assignPlaylists").addEventListener("change",e=>{const box=e.target.closest('input[name="ap"]');if(!box)return;if(box.checked)state.selectedPlaylistIds.add(box.value);else state.selectedPlaylistIds.delete(box.value);refreshSelectionCount();});
+$("assignDevices").addEventListener("change",e=>{const box=e.target.closest('input[name="ad"]');if(!box)return;if(box.checked)state.selectedDeviceMacs.add(box.value);else state.selectedDeviceMacs.delete(box.value);refreshSelectionCount();});
+$("selectAllPlaylists").addEventListener("change",e=>{const visible=state.playlists.filter(p=>p.name.toLowerCase().includes(($("playlistSearch").value||"").toLowerCase()));visible.forEach(p=>{if(e.target.checked)state.selectedPlaylistIds.add(String(p.id));else state.selectedPlaylistIds.delete(String(p.id));});renderAssignments();});
 $("playlistServer").addEventListener("change",updatePreview);$("playlistMacs").addEventListener("input",updatePreview);
 function updatePreview(){const s=state.servers.find(x=>String(x.id)===$("playlistServer").value);const mac=normalizeMac($("playlistMacs").value.split(/\r?\n/)[0]);$("namePreview").textContent=s&&validMac(mac)?`${hostIdentifier(s.url)}_${mac}`:"Select a server and enter a valid MAC.";}
 if("serviceWorker" in navigator)window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(()=>{}));

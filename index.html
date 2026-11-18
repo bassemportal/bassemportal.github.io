@@ -88,7 +88,7 @@
       <section id="page-assignments" class="page hidden">
         <div class="panel"><div class="panel-head"><div><h2>Bulk assignments</h2><p class="muted">Every selected playlist will be assigned to every selected device. Existing links are ignored.</p></div></div>
           <div class="dual-select">
-            <div><div class="select-head"><b>Playlists</b><input id="playlistSearch" placeholder="Search playlists…"></div><div id="assignPlaylists" class="check-list"></div></div>
+            <div><div class="select-head"><div class="select-title"><b>Playlists</b><label class="select-all"><input id="selectAllPlaylists" type="checkbox"> Select all shown</label></div><input id="playlistSearch" placeholder="Search playlists…"></div><div id="assignPlaylists" class="check-list"></div><small class="muted range-hint">Tip: select one playlist, then Shift-click another to select the range.</small></div>
             <div><div class="select-head"><b>Devices</b><input id="deviceSearch" placeholder="Search devices…"></div><div id="assignDevices" class="check-list"></div></div>
           </div>
           <div class="action-row"><span id="assignmentCount" class="muted">0 playlists × 0 devices</span><button id="assignBtn" class="btn primary">Assign selected</button></div>
