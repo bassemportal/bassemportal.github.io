@@ -4,7 +4,7 @@ const cfg=window.BASSEM_CONFIG||{};
 const $=id=>document.getElementById(id);
 const state={sb:null,user:null,profile:null,servers:[],playlists:[],devices:[],assignments:[],dashboardUsers:[],page:"overview"};
 const META={
- is_vod:0,position:null,tvg_urls:"",tvg_shift:0,is_enabled:1,user_agent:null,auto_update:1,include_vod:1,is_expanded:1,
+ is_vod:0,position:null,tvg_urls:"",tvg_shift:0,is_enabled:1,user_agent:null,auto_update:0,include_vod:1,is_expanded:0,
  movie_count:0,catchup_type:2,series_count:0,catchup_hours:72,channel_count:0,
  stalker_token:"123456789123DFFDDF223D2D2D2DS2Q2",catchup_source:null,groups_sorting:1,logos_priority:1,
  expiration_date:null,max_connections:null,server_timezone:null,last_update_time:1794309903421,
