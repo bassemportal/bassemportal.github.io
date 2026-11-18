@@ -1,3 +1,49 @@
-const CACHE="bassemtv-admin-v4";
-self.addEventListener("install",e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(["./","./index.html","./style.css","./app.js","./config.js","./manifest.json","./reset-password.html","./reset-password.js"]))));
-self.addEventListener("fetch",e=>{const u=new URL(e.request.url);if(u.origin===location.origin)e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request)));});
+const CACHE = "bassemtv-admin-pwa-v5";
+const ASSETS = [
+  "./",
+  "./index.html",
+  "./style.css",
+  "./app.js",
+  "./pwa.js",
+  "./config.js",
+  "./manifest.json",
+  "./reset-password.html",
+  "./reset-password.js",
+  "./icons/icon-192.png",
+  "./icons/icon-512.png"
+];
+
+self.addEventListener("install", event => {
+  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting()));
+});
+
+self.addEventListener("activate", event => {
+  event.waitUntil(
+    caches.keys()
+      .then(keys => Promise.all(keys.filter(key => key.startsWith("bassemtv-admin-") && key !== CACHE).map(key => caches.delete(key))))
+      .then(() => self.clients.claim())
+  );
+});
+
+self.addEventListener("fetch", event => {
+  const request = event.request;
+  const url = new URL(request.url);
+  if (request.method !== "GET" || url.origin !== self.location.origin) return;
+
+  if (request.mode === "navigate") {
+    event.respondWith(fetch(request).then(response => {
+      const copy = response.clone();
+      caches.open(CACHE).then(cache => cache.put(request, copy));
+      return response;
+    }).catch(async () => (await caches.match(request)) || (await caches.match("./index.html"))));
+    return;
+  }
+
+  event.respondWith(caches.match(request).then(cached => cached || fetch(request).then(response => {
+    if (response.ok) {
+      const copy = response.clone();
+      caches.open(CACHE).then(cache => cache.put(request, copy));
+    }
+    return response;
+  })));
+});

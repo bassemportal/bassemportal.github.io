@@ -1,9 +1,16 @@
 {
-  "name": "BassemTV Admin",
+  "id": "./",
+  "name": "BassemTV Admin Dashboard",
   "short_name": "BassemTV",
+  "description": "BassemTV administration dashboard",
   "start_url": "./",
+  "scope": "./",
   "display": "standalone",
+  "orientation": "any",
   "background_color": "#101114",
   "theme_color": "#101114",
-  "icons": []
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
 }

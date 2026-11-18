@@ -2,15 +2,15 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#101114"><title>BassemTV Admin</title>
-  <link rel="manifest" href="manifest.json"><link rel="stylesheet" href="style.css">
+  <meta name="theme-color" content="#101114"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><title>BassemTV Admin</title>
+  <link rel="manifest" href="manifest.json"><link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png"><link rel="apple-touch-icon" href="icons/icon-192.png"><link rel="stylesheet" href="style.css">
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="config.js"></script><script defer src="app.js"></script>
 </head>
 <body>
   <section id="loginView" class="login-wrap">
     <div class="login-card">
-      <div class="brand-mark">B</div><p class="eyebrow">BASSEM TV</p><h1>Admin panel</h1>
+      <div class="brand-mark">B</div><p class="eyebrow">BASSEM TV</p><h1>Admin panel</h1><button id="installAppBtn" class="btn ghost full" type="button">Install BassemTV on this phone</button><p id="installAppHelp" class="muted" aria-live="polite"></p>
       <form id="loginForm" class="auth-form">
         <p class="muted">Sign in to your administrator account.</p>
         <label>Email<input id="loginEmail" type="email" autocomplete="username" required></label>
@@ -126,4 +126,5 @@
     </main>
   </div>
   <div id="modal" class="modal hidden"><div class="modal-card"><div class="panel-head"><h2 id="modalTitle">Edit</h2><button id="modalClose" class="btn ghost">✕</button></div><div id="modalBody"></div></div></div>
+  <script defer src="pwa.js"></script>
 </body></html>

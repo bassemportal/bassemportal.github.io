@@ -78,3 +78,12 @@ Upload the files in this folder to the root of a GitHub repository (or the selec
 - The dashboard loads up to 5,000 rows per data table in one request. For larger deployments, add server-side pagination.
 - The browser uses only the Supabase publishable/anon key. Never use a service-role or secret key here.
 - After deploying changes, the service-worker cache version is incremented so clients fetch the updated files.
+
+## 7. Install as an Android PWA
+
+1. Deploy the files to the same GitHub Pages location as the dashboard. Keep your existing `config.js` and its working Supabase publishable/anon key; do not replace it with a placeholder copy from an archive.
+2. Open the HTTPS GitHub Pages dashboard URL in Chrome on Android.
+3. Tap **Install BassemTV on this phone**. If Chrome does not show its install prompt, open Chrome's ⋮ menu and choose **Install app** or **Add to Home screen**.
+4. Launch BassemTV from the new home-screen icon. The app shell can load offline, but Supabase login and dashboard data require an internet connection.
+
+This package makes the dashboard installable as a PWA. Fingerprint/passkey login is a separate authentication change and is not enabled by this PWA shell yet; it will be added and tested next, without storing biometric data in the dashboard.
