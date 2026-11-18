@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#101114"><title>BassemTV Admin</title>
+  <link rel="manifest" href="manifest.json"><link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script><script defer src="app.js"></script>
+</head>
+<body>
+  <section id="loginView" class="login-wrap">
+    <div class="login-card">
+      <div class="brand-mark">B</div><p class="eyebrow">BASSEM TV</p><h1>Admin panel</h1>
+      <form id="loginForm" class="auth-form">
+        <p class="muted">Sign in to your administrator account.</p>
+        <label>Email<input id="loginEmail" type="email" autocomplete="username" required></label>
+        <label>Password<input id="loginPassword" type="password" autocomplete="current-password" required></label>
+        <button class="btn primary full" type="submit">Sign in</button>
+        <div class="auth-links"><button type="button" class="link-btn" data-auth-view="resetView">Forgot password?</button><button type="button" class="link-btn" data-auth-view="registerView">Create account</button></div>
+        <p id="loginError" class="error"></p>
+      </form>
+      <form id="registerForm" class="auth-form hidden">
+        <p class="muted">New accounts require Super Admin approval before dashboard access.</p>
+        <label>Full name<input id="registerName" autocomplete="name" required maxlength="100"></label>
+        <label>Email<input id="registerEmail" type="email" autocomplete="email" required></label>
+        <label>Password<input id="registerPassword" type="password" autocomplete="new-password" minlength="8" required></label>
+        <button class="btn primary full" type="submit">Register</button>
+        <div class="auth-links"><button type="button" class="link-btn" data-auth-view="loginForm">Back to sign in</button></div>
+        <p id="registerMessage" class="error"></p>
+      </form>
+      <form id="resetView" class="auth-form hidden">
+        <p class="muted">Enter your account email and we'll send a password recovery link.</p>
+        <label>Email<input id="resetEmail" type="email" autocomplete="email" required></label>
+        <button class="btn primary full" type="submit">Send recovery email</button>
+        <div class="auth-links"><button type="button" class="link-btn" data-auth-view="loginForm">Back to sign in</button></div>
+        <p id="resetMessage" class="error"></p>
+      </form>
+      <form id="newPasswordView" class="auth-form hidden">
+        <p class="muted">Choose a new password for your account.</p>
+        <label>New password<input id="newPassword" type="password" autocomplete="new-password" minlength="8" required></label>
+        <button class="btn primary full" type="submit">Save new password</button>
+        <p id="newPasswordMessage" class="error"></p>
+      </form>
+    </div>
+  </section>
+  <div id="appView" class="app hidden">
+    <aside class="sidebar">
+      <div class="side-brand"><div class="brand-mark small">B</div><div><b>BassemTV</b><small>CONTROL PANEL</small></div></div>
+      <nav id="nav">
+        <button data-page="overview" class="active">◈ Overview</button>
+        <button data-page="add-playlist">＋ Add playlists</button>
+        <button data-page="assignments">⇄ Assignments</button>
+        <button data-page="playlists">▤ Playlists</button>
+        <button data-page="devices">▣ Devices</button>
+        <button data-page="servers">⌁ Servers</button>
+        <button data-page="settings">⚙ Settings</button>
+        <button data-page="users" id="usersNav" class="hidden">♙ Dashboard users</button>
+      </nav>
+      <div class="side-bottom"><span id="userEmail" class="muted"></span><button id="logoutBtn" class="btn ghost full">Sign out</button></div>
+    </aside>
+    <main class="main">
+      <header class="topbar"><div><p class="eyebrow">BASSEM TV / ADMIN</p><h1 id="pageTitle">Overview</h1></div><button id="refreshBtn" class="btn ghost">↻ Refresh</button></header>
+      <div id="notice" class="notice hidden"></div>
+      <section id="page-overview" class="page">
+        <div class="stats">
+          <article class="stat"><span>Servers</span><strong id="statServers">—</strong></article>
+          <article class="stat"><span>Playlists</span><strong id="statPlaylists">—</strong></article>
+          <article class="stat"><span>Devices</span><strong id="statDevices">—</strong></article>
+          <article class="stat"><span>Assignments</span><strong id="statAssignments">—</strong></article>
+        </div>
+        <div class="panel"><div class="panel-head"><div><h2>Quick actions</h2><p class="muted">Manage your portal data.</p></div></div>
+          <div class="quick-actions"><button class="btn primary" data-go="add-playlist">＋ Create playlists</button><button class="btn" data-go="assignments">⇄ Assign devices</button><button class="btn" data-go="devices">＋ Add device</button></div>
+        </div>
+        <div class="panel"><div class="panel-head"><h2>Recent devices</h2></div><div id="recentDevices" class="table-wrap"></div></div>
+      </section>
+      <section id="page-add-playlist" class="page hidden">
+        <div class="panel">
+          <div class="panel-head"><div><h2>Create playlists</h2><p class="muted">One MAC address per line. A playlist will be created for each valid MAC.</p></div></div>
+          <form id="playlistForm" class="form-grid">
+            <label class="span-2">Host / server<select id="playlistServer" required></select></label>
+            <label class="span-2">MAC addresses<textarea id="playlistMacs" rows="7" placeholder="E662787935AB&#10;00:1A:79:81:BC:CA" required></textarea><small class="muted">Colons, hyphens and spaces are accepted.</small></label>
+            <label class="span-2">Assign created playlists to devices (optional)<select id="playlistDevices" multiple size="6"></select><small class="muted">Use Ctrl / Cmd to select multiple devices.</small></label>
+            <div class="span-2 preview"><b>Name preview</b><div id="namePreview" class="muted">Select a server and enter a MAC.</div></div>
+            <div class="span-2"><button class="btn primary" type="submit">Create playlists</button></div>
+          </form>
+        </div>
+      </section>
+      <section id="page-assignments" class="page hidden">
+        <div class="panel"><div class="panel-head"><div><h2>Bulk assignments</h2><p class="muted">Every selected playlist will be assigned to every selected device. Existing links are ignored.</p></div></div>
+          <div class="dual-select">
+            <div><div class="select-head"><b>Playlists</b><input id="playlistSearch" placeholder="Search playlists…"></div><div id="assignPlaylists" class="check-list"></div></div>
+            <div><div class="select-head"><b>Devices</b><input id="deviceSearch" placeholder="Search devices…"></div><div id="assignDevices" class="check-list"></div></div>
+          </div>
+          <div class="action-row"><span id="assignmentCount" class="muted">0 playlists × 0 devices</span><button id="assignBtn" class="btn primary">Assign selected</button></div>
+        </div>
+        <div class="panel"><div class="panel-head"><h2>Current assignments</h2></div><div id="assignmentTable" class="table-wrap"></div></div>
+      </section>
+      <section id="page-playlists" class="page hidden"><div class="panel"><div class="panel-head"><h2>Playlists</h2><input id="playlistTableSearch" placeholder="Search…"></div><div id="playlistTable" class="table-wrap"></div></div></section>
+      <section id="page-devices" class="page hidden">
+        <div class="panel"><div class="panel-head"><div><h2>Add device</h2><p class="muted">MAC is required. Other values are optional.</p></div></div>
+          <form id="deviceForm" class="form-grid">
+            <label>MAC address<input id="deviceMac" required placeholder="E662787935AB"></label>
+            <label>Name<input id="deviceName" placeholder="Living room"></label>
+            <label>Server<select id="deviceServer"><option value="">No server</option></select></label>
+            <label>Username<input id="deviceUsername"></label><label>Password<input id="devicePassword"></label>
+            <label>App version<input id="deviceAppver"></label><label>Model<input id="deviceModel"></label>
+            <div class="span-2"><button class="btn primary">Add device</button></div>
+          </form>
+        </div>
+        <div class="panel"><div class="panel-head"><h2>Device registry</h2><input id="deviceTableSearch" placeholder="Search devices…"></div><div id="deviceTable" class="table-wrap"></div></div>
+      </section>
+      <section id="page-servers" class="page hidden">
+        <div class="panel"><div class="panel-head"><div><h2>Servers</h2><p class="muted">Add or manage playlist hosts.</p></div></div>
+          <form id="serverForm" class="form-grid"><input type="hidden" id="serverId">
+            <label>Name<input id="serverName" required></label><label>URL<input id="serverUrl" type="url" placeholder="http://example.com" required></label>
+            <label>Type<select id="serverType"><option value="xtream">xtream</option><option value="stalker">stalker</option><option value="other">other</option></select></label>
+            <label>Sort order<input id="serverSort" type="number" value="0"></label>
+            <div class="span-2"><button class="btn primary" id="serverSubmit">Add server</button><button class="btn ghost hidden" id="serverCancel" type="button">Cancel edit</button></div>
+          </form>
+        </div><div class="panel"><div id="serverTable" class="table-wrap"></div></div>
+      </section>
+      <section id="page-users" class="page hidden">
+        <div class="panel"><div class="panel-head"><div><h2>Dashboard users</h2><p class="muted">Only the Super Admin can approve or disable administrator accounts.</p></div><button id="refreshUsersBtn" class="btn">↻ Refresh</button></div><div id="usersTable" class="table-wrap"></div></div>
+      </section>
+      <section id="page-settings" class="page hidden"><div class="panel"><h2>Settings</h2><p class="muted">Supabase connection and signed-in account.</p><dl class="settings-list"><dt>Project URL</dt><dd id="projectUrl"></dd><dt>Signed in as</dt><dd id="settingsEmail"></dd><dt>Data tables</dt><dd>servers · playlists · mac_devices · playlist_assignments</dd></dl><p class="muted">The browser uses the Supabase publishable/anon key. Never put a service-role key in this project.</p></div></section>
+    </main>
+  </div>
+  <div id="modal" class="modal hidden"><div class="modal-card"><div class="panel-head"><h2 id="modalTitle">Edit</h2><button id="modalClose" class="btn ghost">✕</button></div><div id="modalBody"></div></div></div>
+</body></html>
