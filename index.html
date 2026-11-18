@@ -10,9 +10,9 @@
 <body>
   <section id="loginView" class="login-wrap">
     <div class="login-card">
-      <div class="brand-mark">B</div><p class="eyebrow">BASSEM TV</p><h1>Admin panel</h1>
+      <div class="auth-brand"><div class="brand-mark">B</div><div><p class="eyebrow">BASSEM TV</p><div class="brand-caption">ADMINISTRATION PORTAL</div></div></div>
+      <div class="auth-heading"><span class="auth-kicker">SECURE ACCESS</span><h1 id="authTitle">Welcome back</h1><p id="authDescription" class="muted">Sign in to manage your BassemTV platform.</p></div>
       <form id="loginForm" class="auth-form">
-        <p class="muted">Sign in to your administrator account.</p>
         <label>Email<input id="loginEmail" type="email" autocomplete="username" required></label>
         <label>Password<input id="loginPassword" type="password" autocomplete="current-password" required></label>
         <button class="btn primary full" type="submit">Sign in</button>
@@ -20,7 +20,7 @@
         <p id="loginError" class="error"></p>
       </form>
       <form id="registerForm" class="auth-form hidden">
-        <p class="muted">New accounts require Super Admin approval before dashboard access.</p>
+        <p class="auth-intro">New accounts require Super Admin approval before dashboard access.</p>
         <label>Full name<input id="registerName" autocomplete="name" required maxlength="100"></label>
         <label>Email<input id="registerEmail" type="email" autocomplete="email" required></label>
         <label>Password<input id="registerPassword" type="password" autocomplete="new-password" minlength="8" required></label>
@@ -29,16 +29,17 @@
         <p id="registerMessage" class="error"></p>
       </form>
       <form id="resetView" class="auth-form hidden">
-        <p class="muted">Enter your account email and we'll send a password recovery link.</p>
+        <p class="auth-intro">Enter the email address linked to your administrator account. We'll send you a secure password-reset link.</p>
         <label>Email<input id="resetEmail" type="email" autocomplete="email" required></label>
         <button class="btn primary full" type="submit">Send recovery email</button>
         <div class="auth-links"><button type="button" class="link-btn" data-auth-view="loginForm">Back to sign in</button></div>
         <p id="resetMessage" class="error"></p>
       </form>
       <form id="newPasswordView" class="auth-form hidden">
-        <p class="muted">Choose a new password for your account.</p>
+        <p class="auth-intro">Create a strong password you have not used before.</p>
         <label>New password<input id="newPassword" type="password" autocomplete="new-password" minlength="8" required></label>
-        <button class="btn primary full" type="submit">Save new password</button>
+        <label>Confirm new password<input id="confirmNewPassword" type="password" autocomplete="new-password" minlength="8" required></label>
+        <button class="btn primary full" type="submit">Update password</button>
         <p id="newPasswordMessage" class="error"></p>
       </form>
     </div>

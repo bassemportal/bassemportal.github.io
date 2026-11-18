@@ -137,6 +137,13 @@ async function actionClick(e){
 }
 function showAuthView(id){
  ["loginForm","registerForm","resetView","newPasswordView"].forEach(x=>$(x).classList.toggle("hidden",x!==id));
+ const copy={
+   loginForm:["Welcome back","Sign in to manage your BassemTV platform."],
+   registerForm:["Create your account","Request administrator access to the BassemTV control panel."],
+   resetView:["Forgot password?","We'll help you get back into your administrator account."],
+   newPasswordView:["Set a new password","Choose a new password to secure your BassemTV account."]
+ };
+ $("authTitle").textContent=copy[id][0];$("authDescription").textContent=copy[id][1];
  $("loginError").textContent="";$("registerMessage").textContent="";$("resetMessage").textContent="";$("newPasswordMessage").textContent="";
 }
 function authMessage(id,text,bad=false){$(id).textContent=text;$(id).classList.toggle("success-text",!bad);}
@@ -212,10 +219,14 @@ $("resetView").addEventListener("submit",async e=>{e.preventDefault();authMessag
  const {error}=await state.sb.auth.resetPasswordForEmail($("resetEmail").value.trim(),{redirectTo:location.origin+location.pathname});if(error)throw error;
  authMessage("resetMessage","If the address is registered, a password recovery email has been sent.");
  }catch(e){authMessage("resetMessage",e.message,true);}});
-$("newPasswordView").addEventListener("submit",async e=>{e.preventDefault();authMessage("newPasswordMessage","Updating password…");try{
- const {error}=await state.sb.auth.updateUser({password:$("newPassword").value});if(error)throw error;
- await state.sb.auth.signOut();showAuthView("loginForm");$("loginError").textContent="Password updated. You can now sign in.";
- }catch(e){authMessage("newPasswordMessage",e.message,true);}});
+$("newPasswordView").addEventListener("submit",async e=>{e.preventDefault();
+ const password=$("newPassword").value,confirmPassword=$("confirmNewPassword").value;
+ if(password.length<8){authMessage("newPasswordMessage","Use at least 8 characters.",true);return;}
+ if(password!==confirmPassword){authMessage("newPasswordMessage","The passwords do not match.",true);return;}
+ authMessage("newPasswordMessage","Updating password…");try{
+ const {error}=await state.sb.auth.updateUser({password});if(error)throw error;
+ await state.sb.auth.signOut();$("newPasswordView").reset();showAuthView("loginForm");$("loginError").textContent="Password updated successfully. You can now sign in.";
+}catch(e){authMessage("newPasswordMessage",e.message,true);}});
 document.querySelectorAll("[data-auth-view]").forEach(b=>b.addEventListener("click",()=>showAuthView(b.dataset.authView)));
 $("logoutBtn").onclick=async()=>{await state.sb.auth.signOut();state.user=null;state.profile=null;};
 $("refreshUsersBtn").onclick=()=>loadDashboardUsers().catch(fail);
