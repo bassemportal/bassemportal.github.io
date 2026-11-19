@@ -55,7 +55,17 @@ The first Super Admin is promoted manually in Supabase SQL Editor. Public regist
 
 ## 5. Passkeys / fingerprint login
 
-Not enabled in this build. The login currently supports email and password, with email password recovery. Passkeys should be added as a separate, tested enhancement after the deployed domain and authentication redirect configuration are confirmed. A passkey uses the phone's local biometric/device-unlock prompt; the fingerprint itself is not sent to Supabase.
+This build includes Supabase Auth passkey registration and sign-in. Passkey support is experimental and requires Supabase Auth passkeys enabled for the project.
+
+1. In Supabase Dashboard, open Authentication → Passkeys and enable passkey authentication.
+2. Set Relying Party Display Name to `BassemTV`.
+3. Set Relying Party ID to `bassemportal.github.io` (domain only; no scheme or path).
+4. Set Relying Party Origins to `https://bassemportal.github.io`.
+5. Deploy this dashboard over HTTPS and keep the configured project key in `config.js`.
+6. Sign in with email/password, open Settings, and choose Register this phone. Then sign out and test Use fingerprint / passkey.
+
+The login uses Supabase `signInWithPasskey()` and the settings page uses `registerPasskey()`, `auth.passkey.list()`, and `auth.passkey.delete()`. Android may prompt for fingerprint, face unlock, or device PIN depending on device settings. Biometric data is not sent to Supabase. Email/password remains available as a fallback. Passkeys are tied to the relying-party domain, so do not change the GitHub Pages domain after registration without planning passkey migration.
+
 
 ## 6. Publish on GitHub Pages
 

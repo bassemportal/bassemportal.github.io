@@ -42,6 +42,7 @@ function showPage(page){
  $("pageTitle").textContent=({overview:"Overview","add-playlist":"Add playlists",assignments:"Assignments",playlists:"Playlists",devices:"Devices",servers:"Servers",settings:"Settings",users:"Dashboard users"})[page]||page;
  if(page==="assignments")renderAssignments();
  if(page==="users")loadDashboardUsers().catch(fail);
+ if(page==="settings"&&state.user)loadPasskeys().catch(e=>setPasskeyMessage("passkeySettingsMessage",e.message,true));
 }
 function renderAll(){
  $("statServers").textContent=state.servers.length;$("statPlaylists").textContent=state.playlists.length;$("statDevices").textContent=state.devices.length;$("statAssignments").textContent=state.assignments.length;
@@ -187,9 +188,36 @@ async function updateDashboardUser(id,status){
  const {error}=await state.sb.rpc("manage_dashboard_user",{p_user_id:id,p_status:status});
  if(error)throw error;await loadDashboardUsers();msg(`Administrator status changed to ${status}.`);
 }
+function setPasskeyMessage(id,text,bad=false){const el=$(id);if(!el)return;el.textContent=text;el.classList.toggle("error",bad);}
+function passkeySupported(){return !!(window.PublicKeyCredential&&navigator.credentials&&state.sb?.auth?.registerPasskey&&state.sb?.auth?.signInWithPasskey);}
+async function loadPasskeys(){
+ const list=$("passkeyList");if(!list)return;
+ if(!passkeySupported()){list.innerHTML='<p class="muted">This browser does not support passkeys. Open BassemTV in Chrome on Android.</p>';return;}
+ const {data,error}=await state.sb.auth.passkey.list();if(error)throw error;
+ const items=Array.isArray(data)?data:[];
+ if(!items.length){list.innerHTML='<p class="muted">No passkeys registered for this account yet.</p>';return;}
+ list.innerHTML=items.map(k=>`<div class="passkey-item"><div><strong>${esc(k.friendly_name||"Passkey")}</strong><small>Added ${k.created_at?new Date(k.created_at).toLocaleDateString():"—"}${k.last_used_at?` · Last used ${new Date(k.last_used_at).toLocaleDateString()}`:""}</small></div><button class="btn" type="button" data-delete-passkey="${esc(k.id)}">Remove</button></div>`).join("");
+}
+async function registerPasskey(){
+ if(!state.user)throw Error("Sign in with your password before registering a passkey.");
+ if(!passkeySupported())throw Error("Passkeys are not supported by this browser. Use Chrome on Android.");
+ const {data,error}=await state.sb.auth.registerPasskey();if(error)throw error;
+ setPasskeyMessage("passkeySettingsMessage","Passkey registered on this phone.");await loadPasskeys();
+}
+async function signInPasskey(){
+ const button=$("passkeyLoginBtn"),label=$("passkeyLoginMessage");
+ if(!passkeySupported()){setPasskeyMessage("passkeyLoginMessage","Passkeys are not available in this browser. Open this PWA in Chrome on Android.",true);return;}
+ button.disabled=true;setPasskeyMessage("passkeyLoginMessage","Waiting for your phone's fingerprint or screen-lock confirmation…");
+ try{
+  const {data,error}=await state.sb.auth.signInWithPasskey();if(error)throw error;
+  if(!data?.user)throw Error("Passkey sign-in did not return a user.");
+  await acceptSession(data.user);
+ }catch(e){setPasskeyMessage("passkeyLoginMessage",e.message||String(e),true);}
+ finally{button.disabled=false;}
+}
 async function boot(){
  if(!cfg.SUPABASE_URL||!cfg.SUPABASE_ANON_KEY||cfg.SUPABASE_ANON_KEY.includes("PASTE_YOUR")){$("loginError").textContent="First add your Supabase publishable/anon key in config.js.";return;}
- state.sb=window.supabase.createClient(cfg.SUPABASE_URL,cfg.SUPABASE_ANON_KEY);
+ state.sb=window.supabase.createClient(cfg.SUPABASE_URL,cfg.SUPABASE_ANON_KEY,{auth:{experimental:{passkey:true}}});
  const {data}=await state.sb.auth.getSession();
  if(data.session){try{await acceptSession(data.session.user);}catch(e){$("loginError").textContent=e.message;}}
  state.sb.auth.onAuthStateChange((event,session)=>{
@@ -203,6 +231,10 @@ async function enterApp(){
  $("usersNav").classList.toggle("hidden",state.profile?.role!=="superadmin");
  try{await loadData();}catch(e){fail(e);}
 }
+$("passkeyLoginBtn").addEventListener("click",signInPasskey);
+$("registerPasskeyBtn").addEventListener("click",async()=>{const b=$("registerPasskeyBtn");b.disabled=true;setPasskeyMessage("passkeySettingsMessage","Starting passkey registration…");try{await registerPasskey();}catch(e){setPasskeyMessage("passkeySettingsMessage",e.message||String(e),true);}finally{b.disabled=false;}});
+$("refreshPasskeysBtn").addEventListener("click",()=>loadPasskeys().catch(e=>setPasskeyMessage("passkeySettingsMessage",e.message,true)));
+$("passkeyList").addEventListener("click",async e=>{const b=e.target.closest("[data-delete-passkey]");if(!b)return;if(!confirm("Remove this passkey from your account?"))return;b.disabled=true;try{const {error}=await state.sb.auth.passkey.delete({passkeyId:b.dataset.deletePasskey});if(error)throw error;setPasskeyMessage("passkeySettingsMessage","Passkey removed.");await loadPasskeys();}catch(err){setPasskeyMessage("passkeySettingsMessage",err.message,true);}finally{b.disabled=false;}});
 $("loginForm").addEventListener("submit",async e=>{e.preventDefault();$("loginError").textContent="";try{const {data,error}=await state.sb.auth.signInWithPassword({email:$("loginEmail").value,password:$("loginPassword").value});if(error)throw error;await acceptSession(data.user);}catch(e){$("loginError").textContent=e.message;}});
 $("registerForm").addEventListener("submit",async e=>{e.preventDefault();authMessage("registerMessage","Creating account…");try{
  const {data,error}=await state.sb.auth.signUp({email:$("registerEmail").value.trim(),password:$("registerPassword").value,options:{data:{full_name:$("registerName").value.trim()},emailRedirectTo:location.origin+location.pathname}});

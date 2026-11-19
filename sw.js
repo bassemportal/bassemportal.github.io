@@ -1,4 +1,4 @@
-const CACHE = "bassemtv-admin-pwa-v6";
+const CACHE = "bassemtv-admin-pwa-v7";
 const ASSETS = [
   "./",
   "./index.html",

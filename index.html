@@ -4,7 +4,7 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#101114"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><title>BassemTV Admin</title>
   <link rel="manifest" href="manifest.json"><link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png"><link rel="apple-touch-icon" href="icons/icon-192.png"><link rel="stylesheet" href="style.css">
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.105.0"></script>
   <script src="config.js"></script><script defer src="app.js"></script>
 </head>
 <body>
@@ -16,6 +16,8 @@
         <label>Email<input id="loginEmail" type="email" autocomplete="username" required></label>
         <label>Password<input id="loginPassword" type="password" autocomplete="current-password" required></label>
         <button class="btn primary full" type="submit">Sign in</button>
+        <button id="passkeyLoginBtn" class="btn ghost full" type="button">Use fingerprint / passkey</button>
+        <p id="passkeyLoginMessage" class="muted" aria-live="polite"></p>
         <div class="auth-links"><button type="button" class="link-btn" data-auth-view="resetView">Forgot password?</button><button type="button" class="link-btn" data-auth-view="registerForm">Create account</button></div>
         <p id="loginError" class="error"></p>
       </form>
@@ -122,7 +124,10 @@
       <section id="page-users" class="page hidden">
         <div class="panel"><div class="panel-head"><div><h2>Dashboard users</h2><p class="muted">Only the Super Admin can approve or disable administrator accounts.</p></div><button id="refreshUsersBtn" class="btn">↻ Refresh</button></div><div id="usersTable" class="table-wrap"></div></div>
       </section>
-      <section id="page-settings" class="page hidden"><div class="panel"><h2>Settings</h2><p class="muted">Supabase connection and signed-in account.</p><dl class="settings-list"><dt>Project URL</dt><dd id="projectUrl"></dd><dt>Signed in as</dt><dd id="settingsEmail"></dd><dt>Data tables</dt><dd>servers · playlists · mac_devices · playlist_assignments</dd></dl><p class="muted">The browser uses the Supabase publishable/anon key. Never put a service-role key in this project.</p></div></section>
+      <section id="page-settings" class="page hidden">
+        <div class="panel"><h2>Settings</h2><p class="muted">Supabase connection and signed-in account.</p><dl class="settings-list"><dt>Project URL</dt><dd id="projectUrl"></dd><dt>Signed in as</dt><dd id="settingsEmail"></dd><dt>Data tables</dt><dd>servers · playlists · mac_devices · playlist_assignments</dd></dl><p class="muted">The browser uses the Supabase publishable/anon key. Never put a service-role key in this project.</p></div>
+        <div class="panel"><h2>Fingerprint / passkey login</h2><p class="muted">Register a passkey on this phone. Android may verify with fingerprint, face unlock, or your screen-lock PIN. Your biometric data stays on the phone.</p><div class="action-row"><button id="registerPasskeyBtn" class="btn primary" type="button">Register this phone</button><button id="refreshPasskeysBtn" class="btn" type="button">Refresh passkeys</button></div><p id="passkeySettingsMessage" class="muted" aria-live="polite"></p><div id="passkeyList" class="passkey-list"></div></div>
+      </section>
     </main>
   </div>
   <div id="modal" class="modal hidden"><div class="modal-card"><div class="panel-head"><h2 id="modalTitle">Edit</h2><button id="modalClose" class="btn ghost">✕</button></div><div id="modalBody"></div></div></div>
