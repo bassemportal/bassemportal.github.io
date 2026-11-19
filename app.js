@@ -216,14 +216,39 @@ async function signInPasskey(){
  finally{button.disabled=false;}
 }
 async function boot(){
- if(!cfg.SUPABASE_URL||!cfg.SUPABASE_ANON_KEY||cfg.SUPABASE_ANON_KEY.includes("PASTE_YOUR")){$("loginError").textContent="First add your Supabase publishable/anon key in config.js.";return;}
- state.sb=window.supabase.createClient(cfg.SUPABASE_URL,cfg.SUPABASE_ANON_KEY,{auth:{experimental:{passkey:true}}});
- const {data}=await state.sb.auth.getSession();
- if(data.session){try{await acceptSession(data.session.user);}catch(e){$("loginError").textContent=e.message;}}
- state.sb.auth.onAuthStateChange((event,session)=>{
-   if(event==="PASSWORD_RECOVERY"){ $("loginView").classList.remove("hidden");$("appView").classList.add("hidden");showAuthView("newPasswordView");return; }
-   if(!session){state.user=null;state.profile=null;state.dashboardUsers=[];$("appView").classList.add("hidden");$("loginView").classList.remove("hidden");showAuthView("loginForm");}
- });
+  try{
+    if(!cfg.SUPABASE_URL||!cfg.SUPABASE_ANON_KEY||cfg.SUPABASE_ANON_KEY.includes("PASTE_YOUR")){
+      $("loginError").textContent="First add your Supabase publishable/anon key in config.js.";
+      return;
+    }
+    state.sb=window.supabase.createClient(cfg.SUPABASE_URL,cfg.SUPABASE_ANON_KEY,{auth:{experimental:{passkey:true}}});
+    const {data,error}=await state.sb.auth.getSession();
+    if(error)throw error;
+    if(data.session){
+      try{await acceptSession(data.session.user);}
+      catch(e){$("loginError").textContent=e.message;}
+    }
+    state.sb.auth.onAuthStateChange((event,session)=>{
+      if(event==="PASSWORD_RECOVERY"){
+        $("loginView").classList.remove("hidden");
+        $("appView").classList.add("hidden");
+        showAuthView("newPasswordView");
+        return;
+      }
+      if(!session){
+        state.user=null;state.profile=null;state.dashboardUsers=[];
+        $("appView").classList.add("hidden");
+        $("loginView").classList.remove("hidden");
+        showAuthView("loginForm");
+      }
+    });
+  }catch(e){
+    console.error(e);
+    $("loginError").textContent=e?.message||String(e);
+  }finally{
+    document.documentElement.classList.remove("auth-pending");
+    $("authLoading")?.remove();
+  }
 }
 async function enterApp(){
  $("loginView").classList.add("hidden");$("appView").classList.remove("hidden");

@@ -4,10 +4,22 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#101114"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><title>BassemTV Admin</title>
   <link rel="manifest" href="manifest.json"><link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png"><link rel="apple-touch-icon" href="icons/icon-192.png"><link rel="stylesheet" href="style.css">
+  <style>
+    html.auth-pending #loginView,
+    html.auth-pending #appView { display: none !important; }
+    html.auth-pending #authLoading { display: grid !important; }
+    #authLoading { display: none; min-height: 100vh; place-items: center; text-align: center; padding: 24px; color: #d7d7d7; }
+    #authLoading .loading-card { max-width: 320px; }
+    #authLoading .loading-mark { font-size: 30px; font-weight: 800; margin-bottom: 12px; color: #d9bd83; }
+  </style>
+  <script>document.documentElement.classList.add("auth-pending");</script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.105.0"></script>
   <script src="config.js"></script><script defer src="app.js"></script>
 </head>
 <body>
+  <div id="authLoading" role="status" aria-live="polite">
+    <div class="loading-card"><div class="loading-mark">B</div><strong>BassemTV</strong><p class="muted">Checking your session…</p></div>
+  </div>
   <section id="loginView" class="login-wrap">
     <div class="login-card">
       <div class="brand-mark">B</div><p class="eyebrow">BASSEM TV</p><h1>Admin panel</h1><button id="installAppBtn" class="btn ghost full" type="button">Install BassemTV on this phone</button><p id="installAppHelp" class="muted" aria-live="polite"></p>
