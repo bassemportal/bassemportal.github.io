@@ -70,6 +70,7 @@
         <button data-page="servers">⌁ Servers</button>
         <button data-page="settings">⚙ Settings</button>
         <button data-page="users" id="usersNav" class="hidden">♙ Dashboard users</button>
+        <button data-page="login-history" id="loginHistoryNav" class="hidden">◷ Login history</button>
       </nav>
       <div class="side-bottom"><span id="userEmail" class="muted"></span><button id="logoutBtn" class="btn ghost full">Sign out</button></div>
     </aside>
@@ -150,6 +151,25 @@
       </section>
       <section id="page-users" class="page hidden">
         <div class="panel"><div class="panel-head"><div><h2>Dashboard users</h2><p class="muted">Only the Super Admin can approve or disable administrator accounts.</p></div><button id="refreshUsersBtn" class="btn">↻ Refresh</button></div><div id="usersTable" class="table-wrap"></div></div>
+      </section>
+      <section id="page-login-history" class="page hidden">
+  <div class="panel">
+    <div class="panel-head">
+      <div><h2>Administrator login history</h2><p class="muted">Successful, failed and blocked password login attempts.</p></div>
+      <button id="refreshLoginHistoryBtn" class="btn" type="button">↻ Refresh</button>
+    </div>
+    <div class="login-history-filters">
+      <select id="loginHistoryStatus" aria-label="Filter login results">
+        <option value="all">All results</option>
+        <option value="success">Successful</option>
+        <option value="failure">Failed</option>
+        <option value="blocked">Blocked</option>
+      </select>
+      <input id="loginHistorySearch" type="search" placeholder="Search email or IP address…" aria-label="Search login history">
+    </div>
+    <p id="loginHistoryMeta" class="muted">Open this page to load recent login records.</p>
+    <div id="loginHistoryTable" class="table-wrap"><div class="empty">No login history loaded.</div></div>
+  </div>
       </section>
       <section id="page-settings" class="page hidden">
         <div class="panel"><h2>Settings</h2><p class="muted">Supabase connection and signed-in account.</p><dl class="settings-list"><dt>Project URL</dt><dd id="projectUrl"></dd><dt>Signed in as</dt><dd id="settingsEmail"></dd><dt>Data tables</dt><dd>servers · playlists · mac_devices · playlist_assignments</dd></dl><p class="muted">The browser uses the Supabase publishable/anon key. Never put a service-role key in this project.</p></div>
