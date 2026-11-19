@@ -66,6 +66,7 @@
         <button data-page="assignments">⇄ Assignments</button>
         <button data-page="playlists">▤ Playlists</button>
         <button data-page="devices">▣ Devices</button>
+        <button data-page="new-devices">＋ New Devices</button>
         <button data-page="servers">⌁ Servers</button>
         <button data-page="settings">⚙ Settings</button>
         <button data-page="users" id="usersNav" class="hidden">♙ Dashboard users</button>
@@ -122,6 +123,9 @@
           </form>
         </div>
         <div class="panel"><div class="panel-head"><h2>Device registry</h2><input id="deviceTableSearch" placeholder="Search devices…"></div><div id="deviceTable" class="table-wrap"></div></div>
+      </section>
+      <section id="page-new-devices" class="page hidden">
+        <div class="panel"><div class="panel-head"><div><h2>Unregistered devices</h2><p class="muted">MAC addresses found in API requests but not yet present in the device registry. Disabled devices are still treated as registered.</p></div><button id="refreshNewDevicesBtn" class="btn" type="button">↻ Refresh</button></div><div id="newDevicesTable" class="table-wrap"><div class="empty">Open this page to load new devices.</div></div></div>
       </section>
       <section id="page-servers" class="page hidden">
         <div class="panel"><div class="panel-head"><div><h2>Servers</h2><p class="muted">Add or manage playlist hosts.</p></div></div>

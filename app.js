@@ -2,7 +2,7 @@
 "use strict";
 const cfg=window.BASSEM_CONFIG||{};
 const $=id=>document.getElementById(id);
-const state={sb:null,user:null,profile:null,servers:[],playlists:[],devices:[],assignments:[],dashboardUsers:[],page:"overview",selectedPlaylistIds:new Set(),selectedDeviceMacs:new Set(),playlistAnchor:null};
+const state={sb:null,user:null,profile:null,servers:[],playlists:[],devices:[],assignments:[],dashboardUsers:[],page:"overview",selectedPlaylistIds:new Set(),selectedDeviceMacs:new Set(),playlistAnchor:null,newDevices:[]};
 const META={
  is_vod:0,position:null,tvg_urls:"",tvg_shift:0,is_enabled:1,user_agent:null,auto_update:0,include_vod:1,is_expanded:0,
  movie_count:0,catchup_type:2,series_count:0,catchup_hours:72,channel_count:0,
@@ -39,8 +39,9 @@ function showPage(page){
  state.page=page;
  document.querySelectorAll(".page").forEach(x=>x.classList.toggle("hidden",x.id!=="page-"+page));
  document.querySelectorAll("#nav button[data-page]").forEach(x=>x.classList.toggle("active",x.dataset.page===page));
- $("pageTitle").textContent=({overview:"Overview","add-playlist":"Add playlists",assignments:"Assignments",playlists:"Playlists",devices:"Devices",servers:"Servers",settings:"Settings",users:"Dashboard users"})[page]||page;
+ $("pageTitle").textContent=({overview:"Overview","add-playlist":"Add playlists",assignments:"Assignments",playlists:"Playlists",devices:"Devices","new-devices":"New Devices",servers:"Servers",settings:"Settings",users:"Dashboard users"})[page]||page;
  if(page==="assignments")renderAssignments();
+ if(page==="new-devices")loadNewDevices().catch(fail);
  if(page==="users")loadDashboardUsers().catch(fail);
  if(page==="settings"&&state.user)loadPasskeys().catch(e=>setPasskeyMessage("passkeySettingsMessage",e.message,true));
 }
@@ -107,6 +108,51 @@ async function createPlaylists(e){
  await loadData();msg(`${data.length} playlist(s) created${devices.length?`. Assignment links processed: ${assigned}.`:"."}${assignError?" Assignment error: "+assignError.message:""}`,!!assignError);
  }catch(e){fail(e);}
 }
+async function callNewDevicesApi(payload={}){
+ const {data,error}=await state.sb.auth.getSession();if(error)throw error;
+ const token=data.session?.access_token;if(!token)throw Error("Your session expired. Please sign in again.");
+ const response=await fetch(`${cfg.SUPABASE_URL}/functions/v1/admin-new-devices`,{
+  method:"POST",headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`,"apikey":cfg.SUPABASE_ANON_KEY},body:JSON.stringify(payload)
+ });
+ let result={};try{result=await response.json();}catch{}
+ if(!response.ok||result.success===false)throw Error(result.error||`New Devices API failed (${response.status}).`);
+ return result;
+}
+async function loadNewDevices(){
+ $("newDevicesTable").innerHTML='<div class="empty">Loading new devices…</div>';
+ const result=await callNewDevicesApi({action:"list"});state.newDevices=result.devices||[];renderNewDevices();
+}
+function renderNewDevices(){
+ const rows=state.newDevices.map((d,i)=>[
+  `<strong>${esc(d.mac)}</strong>`,esc(d.last_request?new Date(d.last_request).toLocaleString():"—"),
+  `<button class="btn primary" type="button" data-register-new-device="${i}">Register</button>`
+ ]);
+ $("newDevicesTable").innerHTML=table(["MAC address","Last request","Action"],rows);
+}
+function openRegisterNewDevice(index){
+ const d=state.newDevices[index];if(!d)return;
+ const serverOptions='<option value="">No server</option>'+state.servers.map(x=>`<option value="${esc(x.id)}">${esc(x.name)} — ${esc(x.url)}</option>`).join("");
+ openModal("Register new device",`<form id="registerNewDeviceForm" class="form-grid">
+  <label class="span-2">MAC address<input id="newRegMac" value="${esc(d.mac)}" readonly required></label>
+  <label class="span-2">Name<input id="newRegName" placeholder="Device name"></label>
+  <label class="span-2">Server<select id="newRegServer">${serverOptions}</select></label>
+  <label>Username<input id="newRegUsername" autocomplete="off"></label><label>Password<input id="newRegPassword" type="text" autocomplete="off"></label>
+  <label>App version<input id="newRegAppver"></label><label>Device model<input id="newRegModel"></label>
+  <p id="newRegError" class="error span-2" aria-live="polite"></p>
+  <div class="span-2"><button id="newRegSubmit" class="btn primary" type="submit">Register Device</button></div>
+ </form>`);
+ $("registerNewDeviceForm").onsubmit=async e=>{
+  e.preventDefault();const button=$("newRegSubmit"),errorEl=$("newRegError");button.disabled=true;errorEl.textContent="Registering device…";
+  try{
+   const rawMac=$("newRegMac").value;
+   await callNewDevicesApi({action:"register",mac:rawMac,name:$("newRegName").value.trim(),server_id:$("newRegServer").value||null,username:$("newRegUsername").value,password:$("newRegPassword").value,last_appver:$("newRegAppver").value.trim(),last_model:$("newRegModel").value.trim()});
+   state.newDevices=state.newDevices.filter(x=>normalizeMac(x.mac)!==normalizeMac(rawMac));closeModal();renderNewDevices();
+   try{await loadData();msg(`Device ${rawMac} registered successfully.`);}catch(refreshError){msg(`Device ${rawMac} was registered, but the Devices page could not refresh: ${refreshError.message}`,true);}
+  }catch(err){errorEl.textContent=err?.message||String(err);}
+  finally{button.disabled=false;}
+ };
+}
+
 async function addDevice(e){
  e.preventDefault();try{const mac=normalizeMac($("deviceMac").value);if(!validMac(mac))throw Error("Enter a valid 12-character MAC address.");
  const row={mac};const name=$("deviceName").value.trim(),server=$("deviceServer").value,username=$("deviceUsername").value,password=$("devicePassword").value,appver=$("deviceAppver").value.trim(),model=$("deviceModel").value.trim();
@@ -131,6 +177,7 @@ function editServer(id){const s=state.servers.find(x=>String(x.id)===String(id))
 async function saveServer(e){e.preventDefault();try{const id=$("serverId").value;const row={name:$("serverName").value.trim(),url:$("serverUrl").value.trim(),type:$("serverType").value,sort_order:Number($("serverSort").value||0)};const r=id?await state.sb.from("servers").update(row).eq("id",id):await state.sb.from("servers").insert(row);if(r.error)throw r.error;$("serverForm").reset();$("serverId").value="";$("serverSort").value="0";$("serverSubmit").textContent="Add server";$("serverCancel").classList.add("hidden");await loadData();msg(id?"Server updated.":"Server added.");}catch(e){fail(e);}}
 async function actionClick(e){
  const t=e.target.closest("button");if(!t)return;
+ if(t.dataset.registerNewDevice!==undefined)openRegisterNewDevice(Number(t.dataset.registerNewDevice));
  if(t.dataset.editPlaylist)editPlaylist(t.dataset.editPlaylist);
  if(t.dataset.deletePlaylist)deletePlaylist(t.dataset.deletePlaylist);
  if(t.dataset.deleteDevice)deleteDevice(t.dataset.deleteDevice);
@@ -281,7 +328,8 @@ $("logoutBtn").onclick=async()=>{await state.sb.auth.signOut();state.user=null;s
 $("refreshUsersBtn").onclick=()=>loadDashboardUsers().catch(fail);
 $("usersTable").addEventListener("click",e=>{const b=e.target.closest("[data-user-status]");if(!b)return;const status=b.dataset.userStatus,id=b.dataset.userId;if(confirm(`Change this administrator's status to ${status}?`))updateDashboardUser(id,status).catch(fail);});
 
-$("refreshBtn").onclick=async()=>{try{await loadData();msg("Data refreshed.");}catch(e){fail(e);}};
+$("refreshBtn").onclick=async()=>{try{await loadData();if(state.page==="new-devices")await loadNewDevices();msg("Data refreshed.");}catch(e){fail(e);}};
+$("refreshNewDevicesBtn").onclick=()=>loadNewDevices().catch(fail);
 $("nav").onclick=e=>{const b=e.target.closest("[data-page]");if(b)showPage(b.dataset.page);};
 document.addEventListener("click",e=>{const b=e.target.closest("[data-go]");if(b)showPage(b.dataset.go);actionClick(e);});
 $("playlistForm").addEventListener("submit",createPlaylists);$("deviceForm").addEventListener("submit",addDevice);$("assignBtn").onclick=assignBulk;$("serverForm").addEventListener("submit",saveServer);
