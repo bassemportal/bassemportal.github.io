@@ -4,10 +4,22 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#101114"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><title>BassemTV Admin</title>
   <link rel="manifest" href="manifest.json"><link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png"><link rel="apple-touch-icon" href="icons/icon-192.png"><link rel="stylesheet" href="style.css">
+  <style>
+    html.auth-pending #loginView,
+    html.auth-pending #appView { display: none !important; }
+    html.auth-pending #authLoading { display: grid !important; }
+    #authLoading { display: none; min-height: 100vh; place-items: center; text-align: center; padding: 24px; color: #d7d7d7; }
+    #authLoading .loading-card { max-width: 320px; }
+    #authLoading .loading-mark { font-size: 30px; font-weight: 800; margin-bottom: 12px; color: #d9bd83; }
+  </style>
+  <script>document.documentElement.classList.add("auth-pending");</script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.105.0"></script>
   <script src="config.js"></script><script defer src="app.js"></script>
 </head>
 <body>
+  <div id="authLoading" role="status" aria-live="polite">
+    <div class="loading-card"><div class="loading-mark">B</div><strong>BassemTV</strong><p class="muted">Checking your session…</p></div>
+  </div>
   <section id="loginView" class="login-wrap">
     <div class="login-card">
       <div class="brand-mark">B</div><p class="eyebrow">BASSEM TV</p><h1>Admin panel</h1><button id="installAppBtn" class="btn ghost full" type="button">Install BassemTV on this phone</button><p id="installAppHelp" class="muted" aria-live="polite"></p>
@@ -54,10 +66,10 @@
         <button data-page="assignments">⇄ Assignments</button>
         <button data-page="playlists">▤ Playlists</button>
         <button data-page="devices">▣ Devices</button>
+        <button data-page="new-devices">＋ New Devices</button>
         <button data-page="servers">⌁ Servers</button>
         <button data-page="settings">⚙ Settings</button>
         <button data-page="users" id="usersNav" class="hidden">♙ Dashboard users</button>
-        <button data-page="login-history" id="loginHistoryNav" class="hidden">◷ Login history</button>
       </nav>
       <div class="side-bottom"><span id="userEmail" class="muted"></span><button id="logoutBtn" class="btn ghost full">Sign out</button></div>
     </aside>
@@ -110,7 +122,21 @@
             <div class="span-2"><button class="btn primary">Add device</button></div>
           </form>
         </div>
-        <div class="panel"><div class="panel-head"><h2>Device registry</h2><input id="deviceTableSearch" placeholder="Search devices…"></div><div id="deviceTable" class="table-wrap"></div></div>
+        <div class="panel">
+          <div class="panel-head"><div><h2>Device registry</h2><p class="muted">Last connection, inactivity filters and bulk management.</p></div><input id="deviceTableSearch" placeholder="Search devices…"></div>
+          <div class="device-tools">
+            <select id="deviceInactiveFilter" aria-label="Filter inactive devices"><option value="all">All devices</option><option value="7">Inactive 7+ days</option><option value="15">Inactive 15+ days</option><option value="30">Inactive 30+ days</option></select>
+            <label class="select-all"><input id="selectAllDevices" type="checkbox"> Select all shown</label>
+            <span id="deviceSelectionCount" class="muted">0 selected</span>
+            <button id="bulkEnableDevices" class="btn" type="button">Enable selected</button>
+            <button id="bulkDisableDevices" class="btn" type="button">Disable selected</button>
+            <button id="bulkDeleteDevices" class="btn danger" type="button">Delete selected</button>
+          </div>
+          <div id="deviceTable" class="table-wrap"></div>
+        </div>
+      </section>
+      <section id="page-new-devices" class="page hidden">
+        <div class="panel"><div class="panel-head"><div><h2>Unregistered devices</h2><p class="muted">MAC addresses found in API requests but not yet present in the device registry. Disabled devices are still treated as registered.</p></div><button id="refreshNewDevicesBtn" class="btn" type="button">↻ Refresh</button></div><div id="newDevicesTable" class="table-wrap"><div class="empty">Open this page to load new devices.</div></div></div>
       </section>
       <section id="page-servers" class="page hidden">
         <div class="panel"><div class="panel-head"><div><h2>Servers</h2><p class="muted">Add or manage playlist hosts.</p></div></div>
@@ -125,19 +151,9 @@
       <section id="page-users" class="page hidden">
         <div class="panel"><div class="panel-head"><div><h2>Dashboard users</h2><p class="muted">Only the Super Admin can approve or disable administrator accounts.</p></div><button id="refreshUsersBtn" class="btn">↻ Refresh</button></div><div id="usersTable" class="table-wrap"></div></div>
       </section>
-      <section id="page-login-history" class="page hidden">
-        <div class="panel">
-          <div class="panel-head"><div><h2>Login history</h2><p class="muted">Password login successes, failures and blocked attempts. Only the Super Admin can view this audit.</p></div><button id="refreshLoginHistoryBtn" class="btn">↻ Refresh</button></div>
-          <div class="form-grid login-history-filters">
-            <label>Result<select id="loginHistoryStatus"><option value="all">All results</option><option value="success">Successful</option><option value="failure">Failed</option><option value="blocked">Blocked</option></select></label>
-            <label>Search email or IP<input id="loginHistorySearch" type="search" placeholder="Search email or IP…"></label>
-          </div>
-          <p id="loginHistoryMeta" class="muted" aria-live="polite">Loading login records…</p>
-          <div id="loginHistoryTable" class="table-wrap"></div>
-        </div>
-      </section>
       <section id="page-settings" class="page hidden">
         <div class="panel"><h2>Settings</h2><p class="muted">Supabase connection and signed-in account.</p><dl class="settings-list"><dt>Project URL</dt><dd id="projectUrl"></dd><dt>Signed in as</dt><dd id="settingsEmail"></dd><dt>Data tables</dt><dd>servers · playlists · mac_devices · playlist_assignments</dd></dl><p class="muted">The browser uses the Supabase publishable/anon key. Never put a service-role key in this project.</p></div>
+        <div class="panel"><h2>Session security</h2><p class="muted">Automatically sign out when there is no activity in the dashboard. Activity in another open dashboard tab also resets the timer.</p><label for="idleTimeoutSelect">Sign out after inactivity</label><select id="idleTimeoutSelect" class="security-select"><option value="5">5 minutes</option><option value="10">10 minutes</option><option value="15">15 minutes</option><option value="30">30 minutes</option><option value="60">60 minutes</option></select><p class="muted">Default: 15 minutes. This setting is saved in this browser.</p></div>
         <div class="panel"><h2>Fingerprint / passkey login</h2><p class="muted">Register a passkey on this phone. Android may verify with fingerprint, face unlock, or your screen-lock PIN. Your biometric data stays on the phone.</p><div class="action-row"><button id="registerPasskeyBtn" class="btn primary" type="button">Register this phone</button><button id="refreshPasskeysBtn" class="btn" type="button">Refresh passkeys</button></div><p id="passkeySettingsMessage" class="muted" aria-live="polite"></p><div id="passkeyList" class="passkey-list"></div></div>
       </section>
     </main>
