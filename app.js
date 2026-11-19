@@ -295,7 +295,7 @@ async function loadLoginHistory(){
  if(sessionError)throw sessionError;
  const token=sessionData?.session?.access_token;
  if(!token)throw Error("Your session expired. Please sign in again.");
- const response=await fetch(`${cfg.SUPABASE_URL}/functions/v1/admin-login-history`,{
+ const response=await fetch(`${cfg.SUPABASE_URL}/functions/v1/admin_login_history`,{
   method:"GET",headers:{"Authorization":`Bearer ${token}`,"apikey":cfg.SUPABASE_ANON_KEY||cfg.SUPABASE_PUBLISHABLE_KEY||cfg.ANON_KEY||""}
  });
  let payload={};try{payload=await response.json();}catch{}
