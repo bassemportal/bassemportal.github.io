@@ -2,7 +2,7 @@
 "use strict";
 const cfg=window.BASSEM_CONFIG||{};
 const $=id=>document.getElementById(id);
-const state={sb:null,user:null,profile:null,servers:[],playlists:[],devices:[],assignments:[],dashboardUsers:[],page:"overview",selectedPlaylistIds:new Set(),selectedDeviceMacs:new Set(),playlistAnchor:null,newDevices:[]};
+const state={sb:null,user:null,profile:null,servers:[],playlists:[],devices:[],assignments:[],dashboardUsers:[],page:"overview",selectedPlaylistIds:new Set(),selectedDeviceMacs:new Set(),selectedDeviceIds:new Set(),playlistAnchor:null,newDevices:[]};
 const META={
  is_vod:0,position:null,tvg_urls:"",tvg_shift:0,is_enabled:1,user_agent:null,auto_update:0,include_vod:1,is_expanded:0,
  movie_count:0,catchup_type:2,series_count:0,catchup_hours:72,channel_count:0,
@@ -66,8 +66,54 @@ function renderPlaylists(){
 }
 function renderDevices(){
  const q=($("deviceTableSearch")?.value||"").toLowerCase();
- const rows=state.devices.filter(d=>(d.mac+" "+d.name+" "+d.last_model).toLowerCase().includes(q)).map(d=>[esc(d.mac),esc(d.name),esc(d.last_model||"—"),Number(d.enabled)?"<span class=pill>Enabled</span>":"<span class=pill>Disabled</span>",`<div class="table-actions"><button class="btn" data-toggle-device="${d.id}">${Number(d.enabled)?"Disable":"Enable"}</button><button class="btn" data-delete-device="${d.id}">Delete</button></div>`]);
- $("deviceTable").innerHTML=table(["MAC","Name","Model","Status","Actions"],rows);
+ const inactive=$("deviceInactiveFilter")?.value||"all";
+ const cutoff=Date.now()-(Number(inactive)||0)*86400000;
+ const filtered=state.devices.filter(d=>{
+  const matches=(d.mac+" "+d.name+" "+(d.last_model||"")).toLowerCase().includes(q);
+  const seen=d.last_seen?new Date(d.last_seen).getTime():0;
+  const isInactive=inactive==="all"||!seen||seen<cutoff;
+  return matches&&isInactive;
+ });
+ const rows=filtered.map(d=>{
+  const seen=d.last_seen?new Date(d.last_seen).toLocaleString():"Never connected";
+  const checked=state.selectedDeviceIds.has(String(d.id))?"checked":"";
+  return [`<input class="device-row-check" type="checkbox" data-device-select="${d.id}" ${checked} aria-label="Select ${esc(d.mac)}">`,esc(d.mac),esc(d.name),esc(d.last_model||"—"),esc(seen),Number(d.enabled)?"<span class=pill>Enabled</span>":"<span class=pill>Disabled</span>",`<div class="table-actions"><button class="btn" data-device-assignments="${d.id}">History</button><button class="btn" data-toggle-device="${d.id}">${Number(d.enabled)?"Disable":"Enable"}</button><button class="btn" data-delete-device="${d.id}">Delete</button></div>`];
+ });
+ $("deviceTable").innerHTML=table(["","MAC","Name","Model","Last connection","Status","Actions"],rows);
+ const all=filtered.length>0&&filtered.every(d=>state.selectedDeviceIds.has(String(d.id)));
+ const some=filtered.some(d=>state.selectedDeviceIds.has(String(d.id)));
+ const allBox=$("selectAllDevices");if(allBox){allBox.checked=all;allBox.indeterminate=!all&&some;}
+ $("deviceSelectionCount").textContent=`${state.selectedDeviceIds.size} selected`;
+ ["bulkEnableDevices","bulkDisableDevices","bulkDeleteDevices"].forEach(id=>{const b=$(id);if(b)b.disabled=!state.selectedDeviceIds.size;});
+}
+async function showDeviceAssignments(id){
+ const d=state.devices.find(x=>String(x.id)===String(id));if(!d)return;
+ openModal(`Playlist history — ${d.mac}`,"<div class='empty'>Loading assignment history…</div>");
+ try{
+  const {data,error}=await state.sb.from("playlist_assignment_history").select("device_mac,playlist_id,action,changed_at").eq("device_mac",d.mac).order("changed_at",{ascending:false}).limit(500);
+  if(error)throw error;
+  const lookup=new Map(state.playlists.map(p=>[String(p.id),p]));
+  const rows=(data||[]).map(a=>{const pl=lookup.get(String(a.playlist_id));return [esc(pl?.name||("Playlist #"+a.playlist_id)),esc(a.action==="unassigned"?"Unassigned":"Assigned"),esc(a.changed_at?new Date(a.changed_at).toLocaleString():"—")];});
+  $("modalBody").innerHTML=table(["Playlist","Action","Date"],rows);
+ }catch(e){$("modalBody").innerHTML=`<p class="error">Could not load playlist history: ${esc(e.message)}. Apply the included SQL migration in Supabase first.</p>`;}
+}
+async function bulkDeviceAction(action){
+ const ids=[...state.selectedDeviceIds];if(!ids.length)return;
+ const chosen=state.devices.filter(d=>ids.includes(String(d.id)));
+ if(action==="delete"){
+  if(!confirm(`Delete ${chosen.length} selected device(s) and all their playlist assignments? This cannot be undone.`))return;
+  try{
+   const macs=chosen.map(d=>d.mac);
+   const a=await state.sb.from("playlist_assignments").delete().in("device_mac",macs);if(a.error)throw a.error;
+   const r=await state.sb.from("mac_devices").delete().in("id",ids);if(r.error)throw r.error;
+  }catch(e){fail(e);return;}
+ }else{
+  const label=action==="enable"?"enable":"disable";
+  if(!confirm(`${label[0].toUpperCase()+label.slice(1)} ${chosen.length} selected device(s)?`))return;
+  try{const {error}=await state.sb.from("mac_devices").update({enabled:action==="enable"?1:0}).in("id",ids);if(error)throw error;}
+  catch(e){fail(e);return;}
+ }
+ state.selectedDeviceIds.clear();await loadData();msg(action==="delete"?`${chosen.length} device(s) deleted.`:`${chosen.length} device(s) ${action}d.`);
 }
 function renderServers(){
  const rows=state.servers.map(s=>[esc(s.name),esc(s.url),esc(s.type),Number(s.enabled)?"<span class=pill>Enabled</span>":"Disabled",`<div class="table-actions"><button class="btn" data-edit-server="${s.id}">Edit</button><button class="btn" data-toggle-server="${s.id}">${Number(s.enabled)?"Disable":"Enable"}</button><button class="btn" data-delete-server="${s.id}">Delete</button></div>`]);
@@ -181,6 +227,7 @@ async function actionClick(e){
  if(t.dataset.editPlaylist)editPlaylist(t.dataset.editPlaylist);
  if(t.dataset.deletePlaylist)deletePlaylist(t.dataset.deletePlaylist);
  if(t.dataset.deleteDevice)deleteDevice(t.dataset.deleteDevice);
+ if(t.dataset.deviceAssignments)showDeviceAssignments(t.dataset.deviceAssignments);
  if(t.dataset.toggleDevice){const d=state.devices.find(x=>String(x.id)===t.dataset.toggleDevice);try{const {error}=await state.sb.from("mac_devices").update({enabled:Number(d.enabled)?0:1}).eq("id",d.id);if(error)throw error;await loadData();}catch(e){fail(e);}}
  if(t.dataset.editServer)editServer(t.dataset.editServer);
  if(t.dataset.toggleServer){const s=state.servers.find(x=>String(x.id)===t.dataset.toggleServer);try{const {error}=await state.sb.from("servers").update({enabled:Number(s.enabled)?0:1}).eq("id",s.id);if(error)throw error;await loadData();}catch(e){fail(e);}}
@@ -337,6 +384,10 @@ $("serverCancel").onclick=()=>{$("serverForm").reset();$("serverId").value="";$(
 $("modalClose").onclick=closeModal;$("modal").onclick=e=>{if(e.target===$("modal"))closeModal();};
 ["playlistSearch","deviceSearch"].forEach(id=>$(id).addEventListener("input",renderAssignments));
 ["playlistTableSearch","deviceTableSearch"].forEach(id=>$(id).addEventListener("input",id==="playlistTableSearch"?renderPlaylists:renderDevices));
+$("deviceInactiveFilter").addEventListener("change",renderDevices);
+$("deviceTable").addEventListener("change",e=>{const box=e.target.closest("[data-device-select]");if(!box)return;const id=String(box.dataset.deviceSelect);if(box.checked)state.selectedDeviceIds.add(id);else state.selectedDeviceIds.delete(id);renderDevices();});
+$("selectAllDevices").addEventListener("change",e=>{const q=($("deviceTableSearch").value||"").toLowerCase(),inactive=$("deviceInactiveFilter").value,cutoff=Date.now()-(Number(inactive)||0)*86400000;const visible=state.devices.filter(d=>(d.mac+" "+d.name+" "+(d.last_model||"")).toLowerCase().includes(q)&&(inactive==="all"||!d.last_seen||new Date(d.last_seen).getTime()<cutoff));visible.forEach(d=>{if(e.target.checked)state.selectedDeviceIds.add(String(d.id));else state.selectedDeviceIds.delete(String(d.id));});renderDevices();});
+$("bulkEnableDevices").onclick=()=>bulkDeviceAction("enable");$("bulkDisableDevices").onclick=()=>bulkDeviceAction("disable");$("bulkDeleteDevices").onclick=()=>bulkDeviceAction("delete");
 $("assignPlaylists").addEventListener("click",e=>{const box=e.target.closest('input[name="ap"]');if(!box)return;const visible=[...$("assignPlaylists").querySelectorAll('input[name="ap"]')];const index=visible.indexOf(box);if(e.shiftKey&&state.playlistAnchor!==null){e.preventDefault();const start=Math.min(state.playlistAnchor,index),end=Math.max(state.playlistAnchor,index),target=!state.selectedPlaylistIds.has(box.value);visible.slice(start,end+1).forEach(el=>{if(target)state.selectedPlaylistIds.add(el.value);else state.selectedPlaylistIds.delete(el.value);el.checked=target;});refreshSelectionCount();}else{state.playlistAnchor=index;}});
 $("assignPlaylists").addEventListener("change",e=>{const box=e.target.closest('input[name="ap"]');if(!box)return;if(box.checked)state.selectedPlaylistIds.add(box.value);else state.selectedPlaylistIds.delete(box.value);refreshSelectionCount();});
 $("assignDevices").addEventListener("change",e=>{const box=e.target.closest('input[name="ad"]');if(!box)return;if(box.checked)state.selectedDeviceMacs.add(box.value);else state.selectedDeviceMacs.delete(box.value);refreshSelectionCount();});

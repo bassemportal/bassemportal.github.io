@@ -122,7 +122,18 @@
             <div class="span-2"><button class="btn primary">Add device</button></div>
           </form>
         </div>
-        <div class="panel"><div class="panel-head"><h2>Device registry</h2><input id="deviceTableSearch" placeholder="Search devices…"></div><div id="deviceTable" class="table-wrap"></div></div>
+        <div class="panel">
+          <div class="panel-head"><div><h2>Device registry</h2><p class="muted">Last connection, inactivity filters and bulk management.</p></div><input id="deviceTableSearch" placeholder="Search devices…"></div>
+          <div class="device-tools">
+            <select id="deviceInactiveFilter" aria-label="Filter inactive devices"><option value="all">All devices</option><option value="7">Inactive 7+ days</option><option value="15">Inactive 15+ days</option><option value="30">Inactive 30+ days</option></select>
+            <label class="select-all"><input id="selectAllDevices" type="checkbox"> Select all shown</label>
+            <span id="deviceSelectionCount" class="muted">0 selected</span>
+            <button id="bulkEnableDevices" class="btn" type="button">Enable selected</button>
+            <button id="bulkDisableDevices" class="btn" type="button">Disable selected</button>
+            <button id="bulkDeleteDevices" class="btn danger" type="button">Delete selected</button>
+          </div>
+          <div id="deviceTable" class="table-wrap"></div>
+        </div>
       </section>
       <section id="page-new-devices" class="page hidden">
         <div class="panel"><div class="panel-head"><div><h2>Unregistered devices</h2><p class="muted">MAC addresses found in API requests but not yet present in the device registry. Disabled devices are still treated as registered.</p></div><button id="refreshNewDevicesBtn" class="btn" type="button">↻ Refresh</button></div><div id="newDevicesTable" class="table-wrap"><div class="empty">Open this page to load new devices.</div></div></div>
