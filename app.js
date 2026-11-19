@@ -2,7 +2,7 @@
 "use strict";
 const cfg=window.BASSEM_CONFIG||{};
 const $=id=>document.getElementById(id);
-const state={sb:null,user:null,profile:null,servers:[],playlists:[],devices:[],assignments:[],dashboardUsers:[],page:"overview",selectedPlaylistIds:new Set(),selectedDeviceMacs:new Set(),selectedDeviceIds:new Set(),playlistAnchor:null,newDevices:[]};
+const state={sb:null,user:null,profile:null,idleTimer:null,lastActivity:0,servers:[],playlists:[],devices:[],assignments:[],dashboardUsers:[],page:"overview",selectedPlaylistIds:new Set(),selectedDeviceMacs:new Set(),selectedDeviceIds:new Set(),playlistAnchor:null,newDevices:[]};
 const META={
  is_vod:0,position:null,tvg_urls:"",tvg_shift:0,is_enabled:1,user_agent:null,auto_update:0,include_vod:1,is_expanded:0,
  movie_count:0,catchup_type:2,series_count:0,catchup_hours:72,channel_count:0,
@@ -34,6 +34,16 @@ async function loadData(){
  [state.servers,state.playlists,state.devices,state.assignments]=results.map(r=>r.data||[]);
  renderAll();
 }
+const IDLE_KEY="bassemtv_idle_minutes";
+function idleMinutes(){const n=Number(localStorage.getItem(IDLE_KEY)||15);return [5,10,15,30,60].includes(n)?n:15;}
+function updateIdleSetting(){const el=$("idleTimeoutSelect");if(el)el.value=String(idleMinutes());}
+function stopIdleTimer(){if(state.idleTimer)clearTimeout(state.idleTimer);state.idleTimer=null;}
+function recordActivity(){if(!state.user)return;state.lastActivity=Date.now();try{localStorage.setItem("bassemtv_last_activity",String(state.lastActivity));}catch{};armIdleTimer();}
+function armIdleTimer(){stopIdleTimer();if(!state.user)return;const remaining=idleMinutes()*60000-(Date.now()-state.lastActivity);if(remaining<=0){expireIdleSession();return;}state.idleTimer=setTimeout(expireIdleSession,remaining);}
+async function expireIdleSession(){stopIdleTimer();if(!state.user)return;try{await state.sb.auth.signOut();}catch(e){console.error(e);}state.user=null;state.profile=null;$("loginView").classList.remove("hidden");$("appView").classList.add("hidden");showAuthView("loginForm");$("loginError").textContent="You were signed out after being inactive for "+idleMinutes()+" minutes.";}
+function startIdleProtection(){if(!state.user)return;let last=0;try{last=Number(localStorage.getItem("bassemtv_last_activity")||0);}catch{}state.lastActivity=last||Date.now();if(Date.now()-state.lastActivity>=idleMinutes()*60000){expireIdleSession();return;}recordActivity();}
+["pointerdown","keydown","touchstart","scroll","click"].forEach(evt=>document.addEventListener(evt,()=>{if(state.user)recordActivity();},{passive:true}));
+window.addEventListener("storage",e=>{if(e.key==="bassemtv_last_activity"&&state.user){state.lastActivity=Number(e.newValue)||Date.now();armIdleTimer();}});
 function showPage(page){
  if(page==="users"&&state.profile?.role!=="superadmin")return;
  state.page=page;
@@ -43,7 +53,7 @@ function showPage(page){
  if(page==="assignments")renderAssignments();
  if(page==="new-devices")loadNewDevices().catch(fail);
  if(page==="users")loadDashboardUsers().catch(fail);
- if(page==="settings"&&state.user)loadPasskeys().catch(e=>setPasskeyMessage("passkeySettingsMessage",e.message,true));
+ if(page==="settings"&&state.user){loadPasskeys().catch(e=>setPasskeyMessage("passkeySettingsMessage",e.message,true));updateIdleSetting();}
 }
 function renderAll(){
  $("statServers").textContent=state.servers.length;$("statPlaylists").textContent=state.playlists.length;$("statDevices").textContent=state.devices.length;$("statAssignments").textContent=state.assignments.length;
@@ -330,6 +340,7 @@ async function boot(){
         return;
       }
       if(!session){
+        stopIdleTimer();
         state.user=null;state.profile=null;state.dashboardUsers=[];
         $("appView").classList.add("hidden");
         $("loginView").classList.remove("hidden");
@@ -345,6 +356,7 @@ async function boot(){
   }
 }
 async function enterApp(){
+ startIdleProtection();
  $("loginView").classList.add("hidden");$("appView").classList.remove("hidden");
  $("userEmail").textContent=state.user.email||"";$("settingsEmail").textContent=state.user.email||"";
  $("usersNav").classList.toggle("hidden",state.profile?.role!=="superadmin");
@@ -371,7 +383,8 @@ $("newPasswordView").addEventListener("submit",async e=>{e.preventDefault();auth
  await state.sb.auth.signOut();showAuthView("loginForm");$("loginError").textContent="Password updated. You can now sign in.";
  }catch(e){authMessage("newPasswordMessage",e.message,true);}});
 document.querySelectorAll("[data-auth-view]").forEach(b=>b.addEventListener("click",()=>showAuthView(b.dataset.authView)));
-$("logoutBtn").onclick=async()=>{await state.sb.auth.signOut();state.user=null;state.profile=null;};
+$("logoutBtn").onclick=async()=>{stopIdleTimer();await state.sb.auth.signOut();state.user=null;state.profile=null;};
+$("idleTimeoutSelect").addEventListener("change",()=>{const n=Number($("idleTimeoutSelect").value);if(![5,10,15,30,60].includes(n))return;localStorage.setItem(IDLE_KEY,String(n));recordActivity();msg("Automatic logout set to "+n+" minutes.");});
 $("refreshUsersBtn").onclick=()=>loadDashboardUsers().catch(fail);
 $("usersTable").addEventListener("click",e=>{const b=e.target.closest("[data-user-status]");if(!b)return;const status=b.dataset.userStatus,id=b.dataset.userId;if(confirm(`Change this administrator's status to ${status}?`))updateDashboardUser(id,status).catch(fail);});
 
