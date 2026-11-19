@@ -2,7 +2,7 @@
 "use strict";
 const cfg=window.BASSEM_CONFIG||{};
 const $=id=>document.getElementById(id);
-const state={sb:null,user:null,profile:null,idleTimer:null,lastActivity:0,servers:[],playlists:[],devices:[],assignments:[],dashboardUsers:[],page:"overview",selectedPlaylistIds:new Set(),selectedDeviceMacs:new Set(),selectedDeviceIds:new Set(),playlistAnchor:null,newDevices:[]};
+const state={sb:null,user:null,profile:null,idleTimer:null,lastActivity:0,servers:[],playlists:[],devices:[],assignments:[],dashboardUsers:[],loginHistory:[],page:"overview",selectedPlaylistIds:new Set(),selectedDeviceMacs:new Set(),selectedDeviceIds:new Set(),playlistAnchor:null,newDevices:[]};
 const META={
  is_vod:0,position:null,tvg_urls:"",tvg_shift:0,is_enabled:1,user_agent:null,auto_update:0,include_vod:1,is_expanded:0,
  movie_count:0,catchup_type:2,series_count:0,catchup_hours:72,channel_count:0,
@@ -45,14 +45,15 @@ function startIdleProtection(){if(!state.user)return;let last=0;try{last=Number(
 ["pointerdown","keydown","touchstart","scroll","click"].forEach(evt=>document.addEventListener(evt,()=>{if(state.user)recordActivity();},{passive:true}));
 window.addEventListener("storage",e=>{if(e.key==="bassemtv_last_activity"&&state.user){state.lastActivity=Number(e.newValue)||Date.now();armIdleTimer();}});
 function showPage(page){
- if(page==="users"&&state.profile?.role!=="superadmin")return;
+ if((page==="users"||page==="login-history")&&state.profile?.role!=="superadmin")return;
  state.page=page;
  document.querySelectorAll(".page").forEach(x=>x.classList.toggle("hidden",x.id!=="page-"+page));
  document.querySelectorAll("#nav button[data-page]").forEach(x=>x.classList.toggle("active",x.dataset.page===page));
- $("pageTitle").textContent=({overview:"Overview","add-playlist":"Add playlists",assignments:"Assignments",playlists:"Playlists",devices:"Devices","new-devices":"New Devices",servers:"Servers",settings:"Settings",users:"Dashboard users"})[page]||page;
+ $("pageTitle").textContent=({overview:"Overview","add-playlist":"Add playlists",assignments:"Assignments",playlists:"Playlists",devices:"Devices","new-devices":"New Devices",servers:"Servers",settings:"Settings",users:"Dashboard users","login-history":"Login history"})[page]||page;
  if(page==="assignments")renderAssignments();
  if(page==="new-devices")loadNewDevices().catch(fail);
  if(page==="users")loadDashboardUsers().catch(fail);
+ if(page==="login-history")loadLoginHistory().catch(fail);
  if(page==="settings"&&state.user){loadPasskeys().catch(e=>setPasskeyMessage("passkeySettingsMessage",e.message,true));updateIdleSetting();}
 }
 function renderAll(){
@@ -287,6 +288,39 @@ function renderDashboardUsers(){
  });
  $("usersTable").innerHTML=table(["Name","Email","Role","Status","Registered","Actions"],rows);
 }
+
+async function loadLoginHistory(){
+ if(state.profile?.role!=="superadmin")throw Error("Super Admin access required.");
+ const {data:sessionData,error:sessionError}=await state.sb.auth.getSession();
+ if(sessionError)throw sessionError;
+ const token=sessionData?.session?.access_token;
+ if(!token)throw Error("Your session expired. Please sign in again.");
+ const response=await fetch(`${cfg.SUPABASE_URL}/functions/v1/admin-login-history`,{
+  method:"GET",headers:{"Authorization":`Bearer ${token}`,"apikey":cfg.SUPABASE_ANON_KEY||cfg.SUPABASE_PUBLISHABLE_KEY||cfg.ANON_KEY||""}
+ });
+ let payload={};try{payload=await response.json();}catch{}
+ if(!response.ok||payload.success===false)throw Error(payload.message||`Could not load login history (${response.status}).`);
+ state.loginHistory=Array.isArray(payload.records)?payload.records:[];
+ renderLoginHistory();
+}
+function renderLoginHistory(){
+ const status=$("loginHistoryStatus")?.value||"all";
+ const query=($("loginHistorySearch")?.value||"").trim().toLowerCase();
+ const filtered=state.loginHistory.filter(r=>{
+  const statusOk=status==="all"||r.status===status;
+  const text=`${r.email||""} ${r.ip_address||""}`.toLowerCase();
+  return statusOk&&text.includes(query);
+ });
+ const rows=filtered.map(r=>{
+  const when=r.created_at?new Date(r.created_at).toLocaleString():"—";
+  const result=r.status==="success"?"Success":r.status==="failure"?"Failed":"Blocked";
+  const reason=r.reason==="invalid_credentials"?"Incorrect credentials":r.reason==="rate_limited"?"Rate limit":r.reason==="dashboard_account_inactive_or_missing"?"Inactive / unauthorized account":r.reason||"—";
+  return [esc(when),esc(r.email||"—"),`<span class="pill login-status-${esc(r.status)}">${result}</span>`,esc(r.ip_address||"Unknown"),esc(reason),esc(r.event_type||"password_login")];
+ });
+ $("loginHistoryTable").innerHTML=table(["Date & time","Email","Result","IP address","Reason","Method"],rows);
+ $("loginHistoryMeta").textContent=`Showing ${filtered.length} of ${state.loginHistory.length} records (latest 300 loaded).`;
+}
+
 async function updateDashboardUser(id,status){
  if(state.profile?.role!=="superadmin")throw Error("Super Admin access required.");
  const {error}=await state.sb.rpc("manage_dashboard_user",{p_user_id:id,p_status:status});
@@ -360,6 +394,7 @@ async function enterApp(){
  $("loginView").classList.add("hidden");$("appView").classList.remove("hidden");
  $("userEmail").textContent=state.user.email||"";$("settingsEmail").textContent=state.user.email||"";
  $("usersNav").classList.toggle("hidden",state.profile?.role!=="superadmin");
+ $("loginHistoryNav").classList.toggle("hidden",state.profile?.role!=="superadmin");
  try{await loadData();}catch(e){fail(e);}
 }
 $("passkeyLoginBtn").addEventListener("click",signInPasskey);
@@ -450,6 +485,9 @@ document.querySelectorAll("[data-auth-view]").forEach(b=>b.addEventListener("cli
 $("logoutBtn").onclick=async()=>{stopIdleTimer();await state.sb.auth.signOut();state.user=null;state.profile=null;};
 $("idleTimeoutSelect").addEventListener("change",()=>{const n=Number($("idleTimeoutSelect").value);if(![5,10,15,30,60].includes(n))return;localStorage.setItem(IDLE_KEY,String(n));recordActivity();msg("Automatic logout set to "+n+" minutes.");});
 $("refreshUsersBtn").onclick=()=>loadDashboardUsers().catch(fail);
+$("refreshLoginHistoryBtn").onclick=()=>loadLoginHistory().catch(fail);
+$("loginHistoryStatus").addEventListener("change",renderLoginHistory);
+$("loginHistorySearch").addEventListener("input",renderLoginHistory);
 $("usersTable").addEventListener("click",e=>{const b=e.target.closest("[data-user-status]");if(!b)return;const status=b.dataset.userStatus,id=b.dataset.userId;if(confirm(`Change this administrator's status to ${status}?`))updateDashboardUser(id,status).catch(fail);});
 
 $("refreshBtn").onclick=async()=>{try{await loadData();if(state.page==="new-devices")await loadNewDevices();msg("Data refreshed.");}catch(e){fail(e);}};
