@@ -142,7 +142,24 @@ function renderAssignments(){
  const np=state.selectedPlaylistIds.size,nd=state.selectedDeviceMacs.size;
  $("assignmentCount").textContent=`${np} playlists × ${nd} devices = ${np*nd} possible links`;
  const lookup=new Map(state.playlists.map(p=>[String(p.id),p.name]));
- $("assignmentTable").innerHTML=table(["Device MAC","Playlist","Assigned"],state.assignments.map(a=>[esc(a.device_mac),esc(lookup.get(String(a.playlist_id))||("#"+a.playlist_id)),esc(a.assigned_at||"—")]));
+ const rows=state.assignments.map(a=>[
+  esc(a.device_mac),
+  esc(lookup.get(String(a.playlist_id))||("#"+a.playlist_id)),
+  esc(a.assigned_at?new Date(a.assigned_at).toLocaleString():"—"),
+  `<button class="btn" data-unassign-device="${esc(a.device_mac)}" data-unassign-playlist="${Number(a.playlist_id)}">Unassign</button>`
+ ]);
+ $("assignmentTable").innerHTML=table(["Device MAC","Playlist","Assigned","Action"],rows);
+}
+async function unassignPlaylist(deviceMac, playlistId){
+ const playlist=state.playlists.find(p=>String(p.id)===String(playlistId));
+ const label=playlist?.name||("Playlist #"+playlistId);
+ if(!confirm(`Unassign "${label}" from device ${deviceMac}? The playlist itself will remain in the dashboard, and assignments on other devices will not change.`))return;
+ try{
+  const {error}=await state.sb.from("playlist_assignments").delete().eq("device_mac",deviceMac).eq("playlist_id",playlistId);
+  if(error)throw error;
+  await loadData();
+  msg(`"${label}" was unassigned from ${deviceMac}. The playlist was not deleted.`);
+ }catch(e){fail(e);}
 }
 function refreshSelectionCount(){const np=state.selectedPlaylistIds.size,nd=state.selectedDeviceMacs.size;$("assignmentCount").textContent=`${np} playlists × ${nd} devices = ${np*nd} possible links`;const visible=state.playlists.filter(p=>p.name.toLowerCase().includes(($("playlistSearch").value||"").toLowerCase()));const all=visible.length>0&&visible.every(p=>state.selectedPlaylistIds.has(String(p.id)));const ctl=$("selectAllPlaylists");if(ctl){ctl.checked=all;ctl.indeterminate=!all&&visible.some(p=>state.selectedPlaylistIds.has(String(p.id)));}}
 function openModal(title,html){$("modalTitle").textContent=title;$("modalBody").innerHTML=html;$("modal").classList.remove("hidden");}
@@ -261,6 +278,7 @@ async function saveServer(e){e.preventDefault();try{const id=$("serverId").value
 async function actionClick(e){
  const t=e.target.closest("button");if(!t)return;
  if(t.dataset.registerNewDevice!==undefined)openRegisterNewDevice(Number(t.dataset.registerNewDevice));
+ if(t.dataset.unassignDevice&&t.dataset.unassignPlaylist)await unassignPlaylist(t.dataset.unassignDevice,t.dataset.unassignPlaylist);
  if(t.dataset.editPlaylist)editPlaylist(t.dataset.editPlaylist);
  if(t.dataset.deletePlaylist)deletePlaylist(t.dataset.deletePlaylist);
  if(t.dataset.deleteDevice)deleteDevice(t.dataset.deleteDevice);
