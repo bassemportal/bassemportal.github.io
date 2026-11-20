@@ -2,7 +2,7 @@
 "use strict";
 const cfg=window.BASSEM_CONFIG||{};
 const $=id=>document.getElementById(id);
-const state={sb:null,user:null,profile:null,idleTimer:null,lastActivity:0,servers:[],playlists:[],devices:[],assignments:[],dashboardUsers:[],loginHistory:[],page:"overview",selectedPlaylistIds:new Set(),selectedDeviceMacs:new Set(),selectedDeviceIds:new Set(),playlistAnchor:null,newDevices:[]};
+const state={sb:null,user:null,profile:null,idleTimer:null,lastActivity:0,playlistMode:"stalker",selectedServers:{stalker:null,xtream:null},servers:[],playlists:[],devices:[],assignments:[],dashboardUsers:[],loginHistory:[],page:"overview",selectedPlaylistIds:new Set(),selectedDeviceMacs:new Set(),selectedDeviceIds:new Set(),playlistAnchor:null,newDevices:[]};
 const META={
  is_vod:0,position:null,tvg_urls:"",tvg_shift:0,is_enabled:1,user_agent:null,auto_update:0,include_vod:1,is_expanded:0,
  movie_count:0,catchup_type:2,series_count:0,catchup_hours:72,channel_count:0,
@@ -20,23 +20,9 @@ function fail(e){console.error(e);msg(e?.message||String(e),true);}
 function normalizeMac(v){return String(v||"").toUpperCase().replace(/[^0-9A-F]/g,"");}
 function validMac(v){return /^[0-9A-F]{12}$/.test(v);}
 function colonMac(v){return v.match(/.{2}/g).join(":");}
-function hostIdentifier(raw){
- const value=String(raw||"");
- if(value.startsWith("xc:")){
-  try{const x=JSON.parse(value.slice(3));const u=new URL(x.h);const p=u.hostname.toLowerCase().split(".");return p.length>1?p.slice(0,-1).join("."):p[0];}catch{throw Error("Invalid Xtream URL. Expected xc:{\"h\":\"http(s)://host:port\",\"u\":\"username\",\"p\":\"password\",\"o\":\"ts\"}.");}
- }
- const u=new URL(value);const p=u.hostname.toLowerCase().split(".");return p.length>1?p.slice(0,-1).join("."):p[0];
-}
+function hostIdentifier(raw){const u=new URL(raw);const p=u.hostname.toLowerCase().split(".");return p.length>1?p.slice(0,-1).join("."):p[0];}
 function portalUrl(raw){const u=new URL(raw);const path=u.pathname.replace(/\/+$/,"");return u.origin+(path&&path!=="/"?path:"/c");}
 function playlistPayload(server,mac){
- if(String(server.type).toLowerCase()==="xtream"){
-  const value=String(server.url||"");
-  if(!value.startsWith("xc:"))throw Error("For an Xtream server, the URL must use the xc:{...} format.");
-  let obj;try{obj=JSON.parse(value.slice(3));}catch{throw Error("The Xtream xc: URL contains invalid JSON.");}
-  if(!obj||typeof obj!=="object"||!obj.h||!obj.u||!obj.p)throw Error("Xtream URL must contain h, u and p fields.");
-  try{const u=new URL(obj.h);if(!["http:","https:"].includes(u.protocol))throw Error();}catch{throw Error("Xtream field h must be a valid http:// or https:// server address.");}
-  return value;
- }
  const obj={s:portalUrl(server.url),rs:"",ua:1,l:"this.portal_protocol+'://'+this.portal_ip+'/portal.php'",sv:"",m:colonMac(mac),u:"",p:"",di:"",di2:"",sn:"007255N967172",adid:"eec3d2a615d9169e6d703904b89ec3d0"};
  return "s:"+JSON.stringify(obj);
 }
@@ -49,38 +35,18 @@ async function loadData(){
  renderAll();
 }
 const IDLE_KEY="bassemtv_idle_minutes";
-const LAST_ACTIVITY_KEY="bassemtv_last_activity";
-const PAGE_KEY="bassemtv_last_page";
-const VALID_PAGES=["overview","add-playlist","assignments","playlists","devices","new-devices","servers","settings","users","login-history"];
 function idleMinutes(){const n=Number(localStorage.getItem(IDLE_KEY)||15);return [5,10,15,30,60].includes(n)?n:15;}
 function updateIdleSetting(){const el=$("idleTimeoutSelect");if(el)el.value=String(idleMinutes());}
 function stopIdleTimer(){if(state.idleTimer)clearTimeout(state.idleTimer);state.idleTimer=null;}
-function recordActivity(){if(!state.user)return;state.lastActivity=Date.now();try{localStorage.setItem(LAST_ACTIVITY_KEY,String(state.lastActivity));}catch{};armIdleTimer();}
+function recordActivity(){if(!state.user)return;state.lastActivity=Date.now();try{localStorage.setItem("bassemtv_last_activity",String(state.lastActivity));}catch{};armIdleTimer();}
 function armIdleTimer(){stopIdleTimer();if(!state.user)return;const remaining=idleMinutes()*60000-(Date.now()-state.lastActivity);if(remaining<=0){expireIdleSession();return;}state.idleTimer=setTimeout(expireIdleSession,remaining);}
-async function expireIdleSession(){
- stopIdleTimer();if(!state.user)return;
- try{localStorage.removeItem(LAST_ACTIVITY_KEY);}catch{}
- const minutes=idleMinutes();
- try{await state.sb.auth.signOut();}catch(e){console.error(e);}
- state.user=null;state.profile=null;state.lastActivity=0;
- $("loginView").classList.remove("hidden");$("appView").classList.add("hidden");showAuthView("loginForm");
- $("loginError").textContent="You were signed out after being inactive for "+minutes+" minutes. Please sign in again.";
-}
-function startIdleProtection(freshSession=false){
- if(!state.user)return;
- if(freshSession){recordActivity();return true;}
- let last=0;try{last=Number(localStorage.getItem(LAST_ACTIVITY_KEY)||0);}catch{}
- state.lastActivity=last||Date.now();
- if(Date.now()-state.lastActivity>=idleMinutes()*60000){expireIdleSession();return false;}
- recordActivity();
- return true;
-}
+async function expireIdleSession(){stopIdleTimer();if(!state.user)return;try{await state.sb.auth.signOut();}catch(e){console.error(e);}state.user=null;state.profile=null;$("loginView").classList.remove("hidden");$("appView").classList.add("hidden");showAuthView("loginForm");$("loginError").textContent="You were signed out after being inactive for "+idleMinutes()+" minutes.";}
+function startIdleProtection(){if(!state.user)return;let last=0;try{last=Number(localStorage.getItem("bassemtv_last_activity")||0);}catch{}state.lastActivity=last||Date.now();if(Date.now()-state.lastActivity>=idleMinutes()*60000){expireIdleSession();return;}recordActivity();}
 ["pointerdown","keydown","touchstart","scroll","click"].forEach(evt=>document.addEventListener(evt,()=>{if(state.user)recordActivity();},{passive:true}));
-window.addEventListener("storage",e=>{if(e.key===LAST_ACTIVITY_KEY&&state.user){state.lastActivity=Number(e.newValue)||Date.now();armIdleTimer();}});
+window.addEventListener("storage",e=>{if(e.key==="bassemtv_last_activity"&&state.user){state.lastActivity=Number(e.newValue)||Date.now();armIdleTimer();}});
 function showPage(page){
  if((page==="users"||page==="login-history")&&state.profile?.role!=="superadmin")return;
  state.page=page;
- try{localStorage.setItem(PAGE_KEY,page);}catch{}
  document.querySelectorAll(".page").forEach(x=>x.classList.toggle("hidden",x.id!=="page-"+page));
  document.querySelectorAll("#nav button[data-page]").forEach(x=>x.classList.toggle("active",x.dataset.page===page));
  $("pageTitle").textContent=({overview:"Overview","add-playlist":"Add playlists",assignments:"Assignments",playlists:"Playlists",devices:"Devices","new-devices":"New Devices",servers:"Servers",settings:"Settings",users:"Dashboard users","login-history":"Login history"})[page]||page;
@@ -93,7 +59,7 @@ function showPage(page){
 function renderAll(){
  $("statServers").textContent=state.servers.length;$("statPlaylists").textContent=state.playlists.length;$("statDevices").textContent=state.devices.length;$("statAssignments").textContent=state.assignments.length;
  $("userEmail").textContent=state.user?.email||"";$("settingsEmail").textContent=state.user?.email||"";$("projectUrl").textContent=cfg.SUPABASE_URL||"";
- $("playlistServer").innerHTML='<option value="">Select server…</option>'+state.servers.filter(s=>Number(s.enabled)!==0).map(s=>`<option value="${s.id}">${esc(s.name)} — ${esc(s.url)}</option>`).join("");
+ renderServerPicker("stalker");renderServerPicker("xtream");
  $("deviceServer").innerHTML='<option value="">No server</option>'+state.servers.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join("");
  $("playlistDevices").innerHTML=state.devices.map(d=>`<option value="${esc(d.mac)}">${esc(d.name||d.mac)} — ${esc(d.mac)}</option>`).join("");
  $("recentDevices").innerHTML=table(["MAC","Name","Model","Last seen"],state.devices.slice().sort((a,b)=>String(b.last_seen||"").localeCompare(String(a.last_seen||""))).slice(0,8).map(d=>[esc(d.mac),esc(d.name),esc(d.last_model||"—"),esc(d.last_seen||"—")]));
@@ -101,17 +67,13 @@ function renderAll(){
 }
 function table(headers,rows){if(!rows.length)return '<div class="empty">No records found.</div>';return `<table><thead><tr>${headers.map(h=>`<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table>`;}
 function playlistParts(p){
- try{
-  const raw=String(p.url||"");
-  if(raw.startsWith("xc:")){const obj=JSON.parse(raw.slice(3));return {host:String(obj.h||""),mac:"",obj,type:"xtream"};}
-  const payload=raw.startsWith("s:")?raw.slice(2):raw;const obj=JSON.parse(payload);
-  return {host:String(obj.s||""),mac:String(obj.m||"").replace(/[^0-9A-Fa-f]/g,"").toUpperCase(),obj,type:"stalker"};
- }catch{return {host:"",mac:"",obj:null,type:"unknown"};}
+ try{const raw=String(p.url||"");if(raw.startsWith("xc:")){const obj=JSON.parse(raw.slice(3));return {type:"xtream",host:String(obj.h||""),username:String(obj.u||""),password:String(obj.p||""),mac:"",obj};}const payload=raw.startsWith("s:")?raw.slice(2):raw;const obj=JSON.parse(payload);return {type:"stalker",host:String(obj.s||""),username:"",password:"",mac:String(obj.m||"").replace(/[^0-9A-Fa-f]/g,"").toUpperCase(),obj};}
+ catch{return {type:"unknown",host:"",username:"",password:"",mac:"",obj:null};}
 }
 function renderPlaylists(){
  const q=($("playlistTableSearch")?.value||"").toLowerCase();
- const rows=state.playlists.filter(p=>{const parts=playlistParts(p);return (p.name+" "+parts.host+" "+parts.mac).toLowerCase().includes(q);}).map(p=>{const parts=playlistParts(p);return [esc(p.name),esc(parts.host||"—"),esc(parts.mac||"—"),`<div class="table-actions"><button class="btn" data-edit-playlist="${p.id}">Edit</button><button class="btn" data-delete-playlist="${p.id}">Delete</button></div>`];});
- $("playlistTable").innerHTML=table(["Name","Host","MAC","Actions"],rows);
+ const rows=state.playlists.filter(p=>{const parts=playlistParts(p);return (p.name+" "+parts.host+" "+parts.mac+" "+parts.username).toLowerCase().includes(q);}).map(p=>{const parts=playlistParts(p);return [esc(p.name),esc(parts.type),esc(parts.host||"—"),esc(parts.mac||parts.username||"—"),`<div class="table-actions"><button class="btn" data-edit-playlist="${p.id}">Edit</button><button class="btn" data-delete-playlist="${p.id}">Delete</button></div>`];});
+ $("playlistTable").innerHTML=table(["Name","Type","Host","MAC / Username","Actions"],rows);
 }
 function renderDevices(){
  const q=($("deviceTableSearch")?.value||"").toLowerCase();
@@ -185,22 +147,44 @@ function renderAssignments(){
 function refreshSelectionCount(){const np=state.selectedPlaylistIds.size,nd=state.selectedDeviceMacs.size;$("assignmentCount").textContent=`${np} playlists × ${nd} devices = ${np*nd} possible links`;const visible=state.playlists.filter(p=>p.name.toLowerCase().includes(($("playlistSearch").value||"").toLowerCase()));const all=visible.length>0&&visible.every(p=>state.selectedPlaylistIds.has(String(p.id)));const ctl=$("selectAllPlaylists");if(ctl){ctl.checked=all;ctl.indeterminate=!all&&visible.some(p=>state.selectedPlaylistIds.has(String(p.id)));}}
 function openModal(title,html){$("modalTitle").textContent=title;$("modalBody").innerHTML=html;$("modal").classList.remove("hidden");}
 function closeModal(){$("modal").classList.add("hidden");}
+function serverRows(type){return state.servers.filter(s=>Number(s.enabled)!==0&&String(s.type||"").toLowerCase()===type);}
+function renderServerPicker(type){
+ const search=$(type+"ServerSearch"),results=$(type+"ServerResults"),selected=$(type+"ServerSelected"),hidden=$(type+"ServerId");
+ if(!search||!results)return;
+ const chosen=state.selectedServers[type];
+ if(chosen){hidden.value=String(chosen.id);selected.innerHTML=`Selected: <b>${esc(chosen.name)}</b> — ${esc(chosen.url)} <button type="button" class="link-btn" data-clear-server="${type}">Change</button>`;}
+ else{hidden.value="";selected.textContent="No server selected";}
+ const q=search.value.trim().toLowerCase();
+ const matches=serverRows(type).filter(x=>(String(x.name)+" "+String(x.url)).toLowerCase().includes(q)).slice(0,100);
+ results.innerHTML=matches.map(x=>`<button type="button" class="server-picker-option ${chosen&&String(chosen.id)===String(x.id)?"selected":""}" data-pick-server="${type}" data-server-id="${esc(x.id)}"><b>${esc(x.name)}</b><small>${esc(x.url)}</small></button>`).join("")||'<div class="empty">No matching '+type+' servers</div>';
+}
+function setPlaylistMode(mode){state.playlistMode=mode;const stalker=mode==="stalker";$("stalkerFields").classList.toggle("hidden",!stalker);$("xtreamFields").classList.toggle("hidden",stalker);$("stalkerModeBtn").classList.toggle("primary",stalker);$("xtreamModeBtn").classList.toggle("primary",!stalker);$("createPlaylistBtn").textContent=stalker?"Create Stalker playlists":"Create Xtream playlist";$("playlistMacs").required=stalker;$("xtreamUsername").required=!stalker;$("xtreamPassword").required=!stalker;updatePreview();}
 async function createPlaylists(e){
  e.preventDefault();try{
- const sid=$("playlistServer").value,server=state.servers.find(s=>String(s.id)===sid);if(!server)throw Error("Choose a server.");
- const macs=[...new Set($("playlistMacs").value.split(/\r?\n/).map(normalizeMac).filter(Boolean))];
- if(!macs.length)throw Error("Enter at least one MAC address.");
- const invalid=macs.filter(m=>!validMac(m));if(invalid.length)throw Error("Invalid MAC address(es): "+invalid.join(", "));
- const devices=selectedValues($("playlistDevices"));const host=hostIdentifier(server.url);
- const existing=new Set(state.playlists.map(p=>p.name));const rows=[];
- for(const mac of macs){const name=`${host}_${mac}`;if(existing.has(name))continue;existing.add(name);const metadata={...META,is_expanded:0,is_expanded_in_movies:0,is_expanded_in_series:0,stalker_token:String(server.type).toLowerCase()==="xtream"?null:META.stalker_token};rows.push({name,url:playlistPayload(server,mac),metadata});}
- if(!rows.length)throw Error("All generated playlist names already exist.");
- const {data,error}=await state.sb.from("playlists").insert(rows).select("id,name");if(error)throw error;
- let assigned=0,assignError=null;
- if(devices.length){const links=[];for(const p of data)for(const mac of devices)links.push({device_mac:mac,playlist_id:p.id});
- const r=await state.sb.from("playlist_assignments").upsert(links,{onConflict:"device_mac,playlist_id",ignoreDuplicates:true});assignError=r.error;assigned=links.length;}
- $("playlistMacs").value="";[...$("playlistDevices").options].forEach(o=>o.selected=false);
- await loadData();msg(`${data.length} playlist(s) created${devices.length?`. Assignment links processed: ${assigned}.`:"."}${assignError?" Assignment error: "+assignError.message:""}`,!!assignError);
+  const mode=state.playlistMode,server=state.selectedServers[mode];if(!server||!serverRows(mode).some(x=>String(x.id)===String(server.id)))throw Error("Choose a valid "+mode+" server.");
+  const devices=selectedValues($("playlistDevices"));const existing=new Set(state.playlists.map(p=>p.name));const rows=[];
+  if(mode==="stalker"){
+   const macs=[...new Set($("playlistMacs").value.split(/\r?\n/).map(normalizeMac).filter(Boolean))];
+   if(!macs.length)throw Error("Enter at least one MAC address.");
+   const invalid=macs.filter(m=>!validMac(m));if(invalid.length)throw Error("Invalid MAC address(es): "+invalid.join(", "));
+   const host=hostIdentifier(server.url);
+   for(const mac of macs){const name=`${host}_${mac}`;if(existing.has(name))continue;existing.add(name);rows.push({name,url:playlistPayload(server,mac),metadata:{...META, is_expanded:0,is_expanded_in_movies:0,is_expanded_in_series:0}});}
+  }else{
+   const username=$("xtreamUsername").value.trim(),password=$("xtreamPassword").value;
+   if(!username||!password)throw Error("Enter both Xtream username and password.");
+   const host=String(server.url||"").trim();if(!/^https?:\/\//i.test(host))throw Error("The selected Xtream server must have an HTTP or HTTPS host URL.");
+   const name=`${hostIdentifier(host)}_${username}`;
+   if(existing.has(name))throw Error("A playlist named "+name+" already exists.");
+   const url="xc:"+JSON.stringify({h:host,u:username,p:password,o:"ts"});
+   const metadata={...META,is_expanded:0,is_expanded_in_movies:0,is_expanded_in_series:0,stalker_token:null};
+   rows.push({name,url,metadata});
+  }
+  if(!rows.length)throw Error("All generated playlist names already exist.");
+  const {data,error}=await state.sb.from("playlists").insert(rows).select("id,name");if(error)throw error;
+  let assigned=0,assignError=null;
+  if(devices.length){const links=[];for(const p of data)for(const mac of devices)links.push({device_mac:mac,playlist_id:p.id});const r=await state.sb.from("playlist_assignments").upsert(links,{onConflict:"device_mac,playlist_id",ignoreDuplicates:true});assignError=r.error;assigned=links.length;}
+  if(mode==="stalker")$("playlistMacs").value="";else{$("xtreamUsername").value="";$("xtreamPassword").value="";}
+  [...$("playlistDevices").options].forEach(o=>o.selected=false);await loadData();msg(`${data.length} ${mode} playlist(s) created${devices.length?`. Assignment links processed: ${assigned}.`:"."}${assignError?" Assignment error: "+assignError.message:""}`,!!assignError);
  }catch(e){fail(e);}
 }
 async function callNewDevicesApi(payload={}){
@@ -266,12 +250,11 @@ async function deletePlaylist(id){const p=state.playlists.find(x=>String(x.id)==
 function editPlaylist(id){
  const p=state.playlists.find(x=>String(x.id)===String(id));if(!p)return;const parts=playlistParts(p);
  if(parts.type==="xtream"){
-  openModal("Edit Xtream playlist",`<form id="editPlaylistForm" class="form-grid"><label class="span-2">Name<input id="editPName" required value="${esc(p.name)}"></label><p class="muted span-2">The Xtream xc: URL and credentials are preserved exactly. Only the playlist name can be edited here.</p><div class="span-2"><button class="btn primary">Save changes</button></div></form>`);
-  $("editPlaylistForm").onsubmit=async e=>{e.preventDefault();try{const {error}=await state.sb.from("playlists").update({name:$("editPName").value.trim()}).eq("id",id);if(error)throw error;closeModal();await loadData();msg("Xtream playlist updated.");}catch(e){fail(e);}};
-  return;
+  openModal("Edit Xtream playlist",`<form id="editPlaylistForm" class="form-grid"><label class="span-2">Name<input id="editPName" required value="${esc(p.name)}"></label><label class="span-2">Host<input id="editPHost" required value="${esc(parts.host)}"></label><label>Username<input id="editPUser" required value="${esc(parts.username)}"></label><label>Password<input id="editPPass" type="password" required value="${esc(parts.password)}"></label><p class="muted span-2">The Xtream option remains set to ts. Playlist metadata is preserved.</p><div class="span-2"><button class="btn primary">Save changes</button></div></form>`);
+  $("editPlaylistForm").onsubmit=async e=>{e.preventDefault();try{const obj={...parts.obj,h:$("editPHost").value.trim(),u:$("editPUser").value.trim(),p:$("editPPass").value,o:"ts"};const {error}=await state.sb.from("playlists").update({name:$("editPName").value.trim(),url:"xc:"+JSON.stringify(obj)}).eq("id",id);if(error)throw error;closeModal();await loadData();msg("Xtream playlist updated.");}catch(e){fail(e);}};return;
  }
- openModal("Edit playlist",`<form id="editPlaylistForm" class="form-grid"><label class="span-2">Name<input id="editPName" required value="${esc(p.name)}"></label><label class="span-2">Host<input id="editPHost" required value="${esc(parts.host)}"></label><label class="span-2">MAC<input id="editPMac" required value="${esc(parts.mac)}" maxlength="17"></label><p class="muted span-2">Only name, host and MAC are editable here. Other playlist configuration is preserved.</p><div class="span-2"><button class="btn primary">Save changes</button></div></form>`);
- $("editPlaylistForm").onsubmit=async e=>{e.preventDefault();try{if(!parts.obj)throw Error("Playlist data format could not be parsed; refusing to overwrite it.");const mac=normalizeMac($("editPMac").value);if(!validMac(mac))throw Error("Enter a valid 12-character MAC address.");parts.obj.s=$("editPHost").value.trim();parts.obj.m=colonMac(mac);const {error}=await state.sb.from("playlists").update({name:$("editPName").value.trim(),url:"s:"+JSON.stringify(parts.obj)}).eq("id",id);if(error)throw error;closeModal();await loadData();msg("Playlist updated.");}catch(e){fail(e);}};
+ openModal("Edit Stalker playlist",`<form id="editPlaylistForm" class="form-grid"><label class="span-2">Name<input id="editPName" required value="${esc(p.name)}"></label><label class="span-2">Host<input id="editPHost" required value="${esc(parts.host)}"></label><label class="span-2">MAC<input id="editPMac" required value="${esc(parts.mac)}" maxlength="17"></label><p class="muted span-2">Only name, host and MAC are editable here. Other playlist configuration is preserved.</p><div class="span-2"><button class="btn primary">Save changes</button></div></form>`);
+ $("editPlaylistForm").onsubmit=async e=>{e.preventDefault();try{if(!parts.obj)throw Error("Playlist data format could not be parsed; refusing to overwrite it.");const mac=normalizeMac($("editPMac").value);if(!validMac(mac))throw Error("Enter a valid 12-character MAC address.");parts.obj.s=$("editPHost").value.trim();parts.obj.m=colonMac(mac);const {error}=await state.sb.from("playlists").update({name:$("editPName").value.trim(),url:"s:"+JSON.stringify(parts.obj)}).eq("id",id);if(error)throw error;closeModal();await loadData();msg("Stalker playlist updated.");}catch(e){fail(e);}};
 }
 function editServer(id){const s=state.servers.find(x=>String(x.id)===String(id));if(!s)return;$("serverId").value=s.id;$("serverName").value=s.name;$("serverUrl").value=s.url;$("serverType").value=s.type;$("serverSort").value=s.sort_order;$("serverSubmit").textContent="Save server";$("serverCancel").classList.remove("hidden");showPage("servers");}
 async function saveServer(e){e.preventDefault();try{const id=$("serverId").value;const row={name:$("serverName").value.trim(),url:$("serverUrl").value.trim(),type:$("serverType").value,sort_order:Number($("serverSort").value||0)};const r=id?await state.sb.from("servers").update(row).eq("id",id):await state.sb.from("servers").insert(row);if(r.error)throw r.error;$("serverForm").reset();$("serverId").value="";$("serverSort").value="0";$("serverSubmit").textContent="Add server";$("serverCancel").classList.add("hidden");await loadData();msg(id?"Server updated.":"Server added.");}catch(e){fail(e);}}
@@ -297,7 +280,7 @@ async function getMyProfile(){
  if(error)throw error;
  return data;
 }
-async function acceptSession(user,freshSession=false){
+async function acceptSession(user){
  state.user=user;
  let profile;
  try{profile=await getMyProfile();}catch(e){await state.sb.auth.signOut();throw e;}
@@ -309,7 +292,7 @@ async function acceptSession(user,freshSession=false){
    return false;
  }
  state.profile=profile;
- await enterApp(freshSession);
+ await enterApp();
  return true;
 }
 async function loadDashboardUsers(){
@@ -392,7 +375,7 @@ async function signInPasskey(){
  try{
   const {data,error}=await state.sb.auth.signInWithPasskey();if(error)throw error;
   if(!data?.user)throw Error("Passkey sign-in did not return a user.");
-  await acceptSession(data.user,true);
+  await acceptSession(data.user);
  }catch(e){setPasskeyMessage("passkeyLoginMessage",e.message||String(e),true);}
  finally{button.disabled=false;}
 }
@@ -406,7 +389,7 @@ async function boot(){
     const {data,error}=await state.sb.auth.getSession();
     if(error)throw error;
     if(data.session){
-      try{await acceptSession(data.session.user,false);}
+      try{await acceptSession(data.session.user);}
       catch(e){$("loginError").textContent=e.message;}
     }
     state.sb.auth.onAuthStateChange((event,session)=>{
@@ -432,16 +415,13 @@ async function boot(){
     $("authLoading")?.remove();
   }
 }
-async function enterApp(freshSession=false){
- if(!startIdleProtection(freshSession))return;
+async function enterApp(){
+ startIdleProtection();
  $("loginView").classList.add("hidden");$("appView").classList.remove("hidden");
  $("userEmail").textContent=state.user.email||"";$("settingsEmail").textContent=state.user.email||"";
  $("usersNav").classList.toggle("hidden",state.profile?.role!=="superadmin");
  $("loginHistoryNav").classList.toggle("hidden",state.profile?.role!=="superadmin");
  try{await loadData();}catch(e){fail(e);}
- let saved="overview";try{const candidate=localStorage.getItem(PAGE_KEY)||"overview";if(VALID_PAGES.includes(candidate))saved=candidate;}catch{}
- if((saved==="users"||saved==="login-history")&&state.profile?.role!=="superadmin")saved="overview";
- showPage(saved);
 }
 $("passkeyLoginBtn").addEventListener("click",signInPasskey);
 $("registerPasskeyBtn").addEventListener("click",async()=>{const b=$("registerPasskeyBtn");b.disabled=true;setPasskeyMessage("passkeySettingsMessage","Starting passkey registration…");try{await registerPasskey();}catch(e){setPasskeyMessage("passkeySettingsMessage",e.message||String(e),true);}finally{b.disabled=false;}});
@@ -508,7 +488,7 @@ $("loginForm").addEventListener("submit",async e=>{
    refresh_token:result.session.refresh_token
   });
   if(error)throw error;
-  await acceptSession(result.user||data.user,true);
+  await acceptSession(result.user||data.user);
  }catch(e){$("loginError").textContent=e?.message||String(e);}
  finally{loginRequestPending=false;if(button)button.disabled=false;setLoginLockMessage();}
 });
@@ -528,7 +508,7 @@ $("newPasswordView").addEventListener("submit",async e=>{e.preventDefault();auth
  await state.sb.auth.signOut();showAuthView("loginForm");$("loginError").textContent="Password updated. You can now sign in.";
  }catch(e){authMessage("newPasswordMessage",e.message,true);}});
 document.querySelectorAll("[data-auth-view]").forEach(b=>b.addEventListener("click",()=>showAuthView(b.dataset.authView)));
-$("logoutBtn").onclick=async()=>{stopIdleTimer();try{localStorage.removeItem(LAST_ACTIVITY_KEY);}catch{}await state.sb.auth.signOut();state.user=null;state.profile=null;};
+$("logoutBtn").onclick=async()=>{stopIdleTimer();await state.sb.auth.signOut();state.user=null;state.profile=null;};
 $("idleTimeoutSelect").addEventListener("change",()=>{const n=Number($("idleTimeoutSelect").value);if(![5,10,15,30,60].includes(n))return;localStorage.setItem(IDLE_KEY,String(n));recordActivity();msg("Automatic logout set to "+n+" minutes.");});
 $("refreshUsersBtn").onclick=()=>loadDashboardUsers().catch(fail);
 $("refreshLoginHistoryBtn").onclick=()=>loadLoginHistory().catch(fail);
@@ -540,7 +520,7 @@ $("refreshBtn").onclick=async()=>{try{await loadData();if(state.page==="new-devi
 $("refreshNewDevicesBtn").onclick=()=>loadNewDevices().catch(fail);
 $("nav").onclick=e=>{const b=e.target.closest("[data-page]");if(b)showPage(b.dataset.page);};
 document.addEventListener("click",e=>{const b=e.target.closest("[data-go]");if(b)showPage(b.dataset.go);actionClick(e);});
-$("playlistForm").addEventListener("submit",createPlaylists);$("deviceForm").addEventListener("submit",addDevice);$("assignBtn").onclick=assignBulk;$("serverForm").addEventListener("submit",saveServer);
+$("playlistForm").addEventListener("submit",createPlaylists);setPlaylistMode("stalker");$("deviceForm").addEventListener("submit",addDevice);$("assignBtn").onclick=assignBulk;$("serverForm").addEventListener("submit",saveServer);
 $("serverCancel").onclick=()=>{$("serverForm").reset();$("serverId").value="";$("serverSort").value="0";$("serverSubmit").textContent="Add server";$("serverCancel").classList.add("hidden");};
 $("modalClose").onclick=closeModal;$("modal").onclick=e=>{if(e.target===$("modal"))closeModal();};
 ["playlistSearch","deviceSearch"].forEach(id=>$(id).addEventListener("input",renderAssignments));
@@ -553,8 +533,13 @@ $("assignPlaylists").addEventListener("click",e=>{const box=e.target.closest('in
 $("assignPlaylists").addEventListener("change",e=>{const box=e.target.closest('input[name="ap"]');if(!box)return;if(box.checked)state.selectedPlaylistIds.add(box.value);else state.selectedPlaylistIds.delete(box.value);refreshSelectionCount();});
 $("assignDevices").addEventListener("change",e=>{const box=e.target.closest('input[name="ad"]');if(!box)return;if(box.checked)state.selectedDeviceMacs.add(box.value);else state.selectedDeviceMacs.delete(box.value);refreshSelectionCount();});
 $("selectAllPlaylists").addEventListener("change",e=>{const visible=state.playlists.filter(p=>p.name.toLowerCase().includes(($("playlistSearch").value||"").toLowerCase()));visible.forEach(p=>{if(e.target.checked)state.selectedPlaylistIds.add(String(p.id));else state.selectedPlaylistIds.delete(String(p.id));});renderAssignments();});
-$("playlistServer").addEventListener("change",updatePreview);$("playlistMacs").addEventListener("input",updatePreview);
-function updatePreview(){const s=state.servers.find(x=>String(x.id)===$("playlistServer").value);const mac=normalizeMac($("playlistMacs").value.split(/\r?\n/)[0]);$("namePreview").textContent=s&&validMac(mac)?`${hostIdentifier(s.url)}_${mac}`:"Select a server and enter a valid MAC.";}
+$("stalkerModeBtn").onclick=()=>setPlaylistMode("stalker");$("xtreamModeBtn").onclick=()=>setPlaylistMode("xtream");
+["stalker","xtream"].forEach(type=>$(type+"ServerSearch").addEventListener("input",()=>renderServerPicker(type)));
+$("stalkerServerResults").addEventListener("click",pickServer);$("xtreamServerResults").addEventListener("click",pickServer);
+document.addEventListener("click",e=>{const clear=e.target.closest("[data-clear-server]");if(clear){state.selectedServers[clear.dataset.clearServer]=null;$(clear.dataset.clearServer+"ServerSearch").value="";renderServerPicker(clear.dataset.clearServer);updatePreview();}});
+function pickServer(e){const b=e.target.closest("[data-pick-server]");if(!b)return;const type=b.dataset.pickServer;state.selectedServers[type]=state.servers.find(x=>String(x.id)===String(b.dataset.serverId))||null;$(type+"ServerSearch").value="";renderServerPicker(type);updatePreview();}
+["playlistMacs","xtreamUsername"].forEach(id=>$(id).addEventListener("input",updatePreview));
+function updatePreview(){const type=state.playlistMode,s=state.selectedServers[type];let name="Select a server and enter the playlist details.";if(s&&type==="stalker"){const mac=normalizeMac($("playlistMacs").value.split(/\r?\n/)[0]);if(validMac(mac))name=`${hostIdentifier(s.url)}_${mac}`;}else if(s&&type==="xtream"){const u=$("xtreamUsername").value.trim();if(u)name=`${hostIdentifier(s.url)}_${u}`;}$("namePreview").textContent=name;}
 if("serviceWorker" in navigator)window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(()=>{}));
 boot();
 })();

@@ -91,13 +91,22 @@
       </section>
       <section id="page-add-playlist" class="page hidden">
         <div class="panel">
-          <div class="panel-head"><div><h2>Create playlists</h2><p class="muted">One MAC address per line. A playlist will be created for each valid MAC.</p></div></div>
+          <div class="panel-head"><div><h2>Create playlists</h2><p class="muted">Choose the playlist type. Stalker and Xtream use separate forms.</p></div></div>
+          <div class="playlist-type-switch"><button type="button" class="btn primary" id="stalkerModeBtn">Stalker</button><button type="button" class="btn" id="xtreamModeBtn">Xtream</button></div>
           <form id="playlistForm" class="form-grid">
-            <label class="span-2">Host / server<select id="playlistServer" required></select></label>
-            <label class="span-2">MAC addresses<textarea id="playlistMacs" rows="7" placeholder="E662787935AB&#10;00:1A:79:81:BC:CA" required></textarea><small class="muted">Colons, hyphens and spaces are accepted.</small></label>
+            <div id="stalkerFields" class="form-grid span-2">
+              <div class="span-2"><label>Stalker host / server</label><div class="server-picker" data-picker="stalker"><input id="stalkerServerSearch" type="search" placeholder="Search Stalker servers by name or host…" autocomplete="off"><input id="stalkerServerId" type="hidden"><div id="stalkerServerResults" class="server-picker-results"></div><div id="stalkerServerSelected" class="server-selected muted">No server selected</div></div></div>
+              <label class="span-2">MAC addresses<textarea id="playlistMacs" rows="7" placeholder="E662787935AB&#10;00:1A:79:81:BC:CA" required></textarea><small class="muted">One MAC per line. Colons, hyphens and spaces are accepted.</small></label>
+            </div>
+            <div id="xtreamFields" class="form-grid span-2 hidden">
+              <div class="span-2"><label>Xtream host / server</label><div class="server-picker" data-picker="xtream"><input id="xtreamServerSearch" type="search" placeholder="Search Xtream servers by name or host…" autocomplete="off"><input id="xtreamServerId" type="hidden"><div id="xtreamServerResults" class="server-picker-results"></div><div id="xtreamServerSelected" class="server-selected muted">No server selected</div></div></div>
+              <label>Username<input id="xtreamUsername" autocomplete="off" required></label>
+              <label>Password<input id="xtreamPassword" type="password" autocomplete="new-password" required></label>
+              <div class="span-2 muted">Output format: xc:… · Output option is automatically set to <b>ts</b>.</div>
+            </div>
             <label class="span-2">Assign created playlists to devices (optional)<select id="playlistDevices" multiple size="6"></select><small class="muted">Use Ctrl / Cmd to select multiple devices.</small></label>
-            <div class="span-2 preview"><b>Name preview</b><div id="namePreview" class="muted">Select a server and enter a MAC.</div></div>
-            <div class="span-2"><button class="btn primary" type="submit">Create playlists</button></div>
+            <div class="span-2 preview"><b>Name preview</b><div id="namePreview" class="muted">Select a server and enter the playlist details.</div></div>
+            <div class="span-2"><button class="btn primary" type="submit" id="createPlaylistBtn">Create Stalker playlists</button></div>
           </form>
         </div>
       </section>
@@ -142,7 +151,7 @@
       <section id="page-servers" class="page hidden">
         <div class="panel"><div class="panel-head"><div><h2>Servers</h2><p class="muted">Add or manage playlist hosts.</p></div></div>
           <form id="serverForm" class="form-grid"><input type="hidden" id="serverId">
-            <label>Name<input id="serverName" required></label><label>URL / Xtream xc:<input id="serverUrl" type="text" placeholder="http://portal.example or xc:{...}" required></label>
+            <label>Name<input id="serverName" required></label><label>URL<input id="serverUrl" type="url" placeholder="http://example.com" required></label>
             <label>Type<select id="serverType"><option value="xtream">xtream</option><option value="stalker">stalker</option><option value="other">other</option></select></label>
             <label>Sort order<input id="serverSort" type="number" value="0"></label>
             <div class="span-2"><button class="btn primary" id="serverSubmit">Add server</button><button class="btn ghost hidden" id="serverCancel" type="button">Cancel edit</button></div>
