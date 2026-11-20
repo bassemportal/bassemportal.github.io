@@ -298,7 +298,7 @@ async function getMyProfile(){
  if(error)throw error;
  return data;
 }
-async function acceptSession(user){
+async function acceptSession(user, freshLogin = false){
  state.user=user;
  let profile;
  try{profile=await getMyProfile();}catch(e){await state.sb.auth.signOut();throw e;}
@@ -310,6 +310,12 @@ async function acceptSession(user){
    return false;
  }
  state.profile=profile;
+ if (freshLogin) {
+  state.lastActivity = Date.now();
+  try {
+    localStorage.setItem("bassemtv_last_activity", String(state.lastActivity));
+  } catch {}
+}
  await enterApp();
  return true;
 }
@@ -393,7 +399,7 @@ async function signInPasskey(){
  try{
   const {data,error}=await state.sb.auth.signInWithPasskey();if(error)throw error;
   if(!data?.user)throw Error("Passkey sign-in did not return a user.");
-  await acceptSession(data.user);
+  await acceptSession(data.user, true);
  }catch(e){setPasskeyMessage("passkeyLoginMessage",e.message||String(e),true);}
  finally{button.disabled=false;}
 }
@@ -506,7 +512,7 @@ $("loginForm").addEventListener("submit",async e=>{
    refresh_token:result.session.refresh_token
   });
   if(error)throw error;
-  await acceptSession(result.user||data.user);
+  await acceptSession(result.user||data.user, true);
  }catch(e){$("loginError").textContent=e?.message||String(e);}
  finally{loginRequestPending=false;if(button)button.disabled=false;setLoginLockMessage();}
 });
