@@ -118,7 +118,15 @@
           </div>
           <div class="action-row"><span id="assignmentCount" class="muted">0 playlists × 0 devices</span><button id="assignBtn" class="btn primary">Assign selected</button></div>
         </div>
-        <div class="panel"><div class="panel-head"><h2>Current assignments</h2></div><div id="assignmentTable" class="table-wrap"></div></div>
+        <div class="panel">
+          <div class="panel-head"><div><h2>Current assignments</h2><p class="muted">Search a device MAC, select its playlist links, then unassign them in one action.</p></div><input id="currentAssignmentSearch" placeholder="Search device MAC…"></div>
+          <div class="device-tools">
+            <label class="select-all"><input id="selectAllAssignments" type="checkbox"> Select all shown</label>
+            <span id="currentAssignmentSelectionCount" class="muted">0 selected</span>
+            <button id="bulkUnassignAssignments" class="btn danger" type="button" disabled>Unassign selected</button>
+          </div>
+          <div id="assignmentTable" class="table-wrap"></div>
+        </div>
       </section>
       <section id="page-playlists" class="page hidden"><div class="panel"><div class="panel-head"><h2>Playlists</h2><input id="playlistTableSearch" placeholder="Search…"></div><div id="playlistTable" class="table-wrap"></div></div></section>
       <section id="page-devices" class="page hidden">

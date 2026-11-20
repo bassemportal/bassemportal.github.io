@@ -2,7 +2,7 @@
 "use strict";
 const cfg=window.BASSEM_CONFIG||{};
 const $=id=>document.getElementById(id);
-const state={sb:null,user:null,profile:null,idleTimer:null,lastActivity:0,playlistMode:"stalker",selectedServers:{stalker:null,xtream:null},servers:[],playlists:[],devices:[],assignments:[],dashboardUsers:[],loginHistory:[],page:"overview",selectedPlaylistIds:new Set(),selectedDeviceMacs:new Set(),selectedDeviceIds:new Set(),playlistAnchor:null,newDevices:[]};
+const state={sb:null,user:null,profile:null,idleTimer:null,lastActivity:0,playlistMode:"stalker",selectedServers:{stalker:null,xtream:null},servers:[],playlists:[],devices:[],assignments:[],dashboardUsers:[],loginHistory:[],page:"overview",selectedPlaylistIds:new Set(),selectedDeviceMacs:new Set(),selectedDeviceIds:new Set(),selectedAssignmentKeys:new Set(),playlistAnchor:null,newDevices:[]};
 const META={
  is_vod:0,position:null,tvg_urls:"",tvg_shift:0,is_enabled:1,user_agent:null,auto_update:0,include_vod:1,is_expanded:0,
  movie_count:0,catchup_type:2,series_count:0,catchup_hours:72,channel_count:0,
@@ -133,6 +133,7 @@ function renderServers(){
  const rows=state.servers.map(s=>[esc(s.name),esc(s.url),esc(s.type),Number(s.enabled)?"<span class=pill>Enabled</span>":"Disabled",`<div class="table-actions"><button class="btn" data-edit-server="${s.id}">Edit</button><button class="btn" data-toggle-server="${s.id}">${Number(s.enabled)?"Disable":"Enable"}</button><button class="btn" data-delete-server="${s.id}">Delete</button></div>`]);
  $("serverTable").innerHTML=table(["Name","URL","Type","Status","Actions"],rows);
 }
+function assignmentKey(a){return String(a.device_mac)+"::"+String(a.playlist_id);}
 function renderAssignments(){
  if(!$("assignPlaylists"))return;
  const pq=($("playlistSearch")?.value||"").toLowerCase(),dq=($("deviceSearch")?.value||"").toLowerCase();
@@ -145,13 +146,42 @@ function renderAssignments(){
  const np=state.selectedPlaylistIds.size,nd=state.selectedDeviceMacs.size;
  $("assignmentCount").textContent=`${np} playlists × ${nd} devices = ${np*nd} possible links`;
  const lookup=new Map(state.playlists.map(p=>[String(p.id),p.name]));
- const rows=state.assignments.map(a=>[
-  esc(a.device_mac),
-  esc(lookup.get(String(a.playlist_id))||("#"+a.playlist_id)),
-  esc(a.assigned_at?new Date(a.assigned_at).toLocaleString():"—"),
-  `<button class="btn" data-unassign-device="${esc(a.device_mac)}" data-unassign-playlist="${Number(a.playlist_id)}">Unassign</button>`
- ]);
- $("assignmentTable").innerHTML=table(["Device MAC","Playlist","Assigned","Action"],rows);
+ const aq=($("currentAssignmentSearch")?.value||"").trim().toLowerCase();
+ const filteredAssignments=state.assignments.filter(a=>String(a.device_mac||"").toLowerCase().includes(aq));
+ const rows=filteredAssignments.map(a=>{
+  const key=assignmentKey(a),checked=state.selectedAssignmentKeys.has(key)?"checked":"";
+  return [
+   `<input type="checkbox" class="assignment-row-check" data-assignment-key="${esc(key)}" ${checked} aria-label="Select ${esc(a.device_mac)} playlist assignment">`,
+   esc(a.device_mac),
+   esc(lookup.get(String(a.playlist_id))||("#"+a.playlist_id)),
+   esc(a.assigned_at?new Date(a.assigned_at).toLocaleString():"—"),
+   `<button class="btn" data-unassign-device="${esc(a.device_mac)}" data-unassign-playlist="${Number(a.playlist_id)}">Unassign</button>`
+  ];
+ });
+ $("assignmentTable").innerHTML=table(["","Device MAC","Playlist","Assigned","Action"],rows);
+ const allSelected=filteredAssignments.length>0&&filteredAssignments.every(a=>state.selectedAssignmentKeys.has(assignmentKey(a)));
+ const someSelected=filteredAssignments.some(a=>state.selectedAssignmentKeys.has(assignmentKey(a)));
+ const allCtl=$("selectAllAssignments");if(allCtl){allCtl.checked=allSelected;allCtl.indeterminate=!allSelected&&someSelected;}
+ const selectedCount=state.selectedAssignmentKeys.size;
+ $("currentAssignmentSelectionCount").textContent=`${selectedCount} selected`;
+ $("bulkUnassignAssignments").disabled=selectedCount===0;
+}
+async function bulkUnassignAssignments(){
+ const selected=state.assignments.filter(a=>state.selectedAssignmentKeys.has(assignmentKey(a)));
+ if(!selected.length)return;
+ const byMac=new Map();
+ selected.forEach(a=>{const mac=String(a.device_mac);if(!byMac.has(mac))byMac.set(mac,[]);byMac.get(mac).push(a.playlist_id);});
+ const summary=[...byMac.entries()].map(([mac,ids])=>`${mac}: ${ids.length} playlist(s)`).join("\\n");
+ if(!confirm(`Unassign ${selected.length} selected playlist assignment(s)?\\n\\n${summary}\\n\\nThe playlists and devices will not be deleted.`))return;
+ try{
+  for(const [mac,ids] of byMac){
+   const {error}=await state.sb.from("playlist_assignments").delete().eq("device_mac",mac).in("playlist_id",[...new Set(ids)]);
+   if(error)throw error;
+  }
+  state.selectedAssignmentKeys.clear();
+  await loadData();
+  msg(`${selected.length} playlist assignment(s) unassigned. Playlists and devices were kept.`);
+ }catch(e){fail(e);}
 }
 async function unassignPlaylist(deviceMac, playlistId){
  const playlist=state.playlists.find(p=>String(p.id)===String(playlistId));
@@ -565,7 +595,10 @@ document.addEventListener("click",e=>{const b=e.target.closest("[data-go]");if(b
 $("playlistForm").addEventListener("submit",createPlaylists);setPlaylistMode("stalker");$("deviceForm").addEventListener("submit",addDevice);$("assignBtn").onclick=assignBulk;$("serverForm").addEventListener("submit",saveServer);
 $("serverCancel").onclick=()=>{$("serverForm").reset();$("serverId").value="";$("serverSort").value="0";$("serverSubmit").textContent="Add server";$("serverCancel").classList.add("hidden");};
 $("modalClose").onclick=closeModal;$("modal").onclick=e=>{if(e.target===$("modal"))closeModal();};
-["playlistSearch","deviceSearch"].forEach(id=>$(id).addEventListener("input",renderAssignments));
+["playlistSearch","deviceSearch","currentAssignmentSearch"].forEach(id=>$(id).addEventListener("input",renderAssignments));
+$("assignmentTable").addEventListener("change",e=>{const box=e.target.closest(".assignment-row-check");if(!box)return;const key=box.dataset.assignmentKey;if(box.checked)state.selectedAssignmentKeys.add(key);else state.selectedAssignmentKeys.delete(key);renderAssignments();});
+$("selectAllAssignments").addEventListener("change",e=>{const q=($("currentAssignmentSearch").value||"").trim().toLowerCase();state.assignments.filter(a=>String(a.device_mac||"").toLowerCase().includes(q)).forEach(a=>{const key=assignmentKey(a);if(e.target.checked)state.selectedAssignmentKeys.add(key);else state.selectedAssignmentKeys.delete(key);});renderAssignments();});
+$("bulkUnassignAssignments").onclick=bulkUnassignAssignments;
 ["playlistTableSearch","deviceTableSearch"].forEach(id=>$(id).addEventListener("input",id==="playlistTableSearch"?renderPlaylists:renderDevices));
 $("deviceInactiveFilter").addEventListener("change",renderDevices);
 $("deviceTable").addEventListener("change",e=>{const box=e.target.closest("[data-device-select]");if(!box)return;const id=String(box.dataset.deviceSelect);if(box.checked)state.selectedDeviceIds.add(id);else state.selectedDeviceIds.delete(id);renderDevices();});
