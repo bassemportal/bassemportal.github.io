@@ -47,6 +47,9 @@ window.addEventListener("storage",e=>{if(e.key==="bassemtv_last_activity"&&state
 function showPage(page){
  if((page==="users"||page==="login-history")&&state.profile?.role!=="superadmin")return;
  state.page=page;
+ try{
+  sessionStorage.setItem("bassemtv_current_page",page);
+}catch{}
  document.querySelectorAll(".page").forEach(x=>x.classList.toggle("hidden",x.id!=="page-"+page));
  document.querySelectorAll("#nav button[data-page]").forEach(x=>x.classList.toggle("active",x.dataset.page===page));
  $("pageTitle").textContent=({overview:"Overview","add-playlist":"Add playlists",assignments:"Assignments",playlists:"Playlists",devices:"Devices","new-devices":"New Devices",servers:"Servers",settings:"Settings",users:"Dashboard users","login-history":"Login history"})[page]||page;
@@ -445,7 +448,13 @@ async function enterApp(){
  $("userEmail").textContent=state.user.email||"";$("settingsEmail").textContent=state.user.email||"";
  $("usersNav").classList.toggle("hidden",state.profile?.role!=="superadmin");
  $("loginHistoryNav").classList.toggle("hidden",state.profile?.role!=="superadmin");
- try{await loadData();}catch(e){fail(e);}
+ try{
+  await loadData();
+  const savedPage=sessionStorage.getItem("bassemtv_current_page")||"overview";
+  showPage(savedPage);
+}catch(e){
+  fail(e);
+}
 }
 $("passkeyLoginBtn").addEventListener("click",signInPasskey);
 $("registerPasskeyBtn").addEventListener("click",async()=>{const b=$("registerPasskeyBtn");b.disabled=true;setPasskeyMessage("passkeySettingsMessage","Starting passkey registration…");try{await registerPasskey();}catch(e){setPasskeyMessage("passkeySettingsMessage",e.message||String(e),true);}finally{b.disabled=false;}});
