@@ -9,7 +9,7 @@ const META={
  stalker_token:"123456789123DFFDDF223D2D2D2DS2Q2",catchup_source:null,groups_sorting:1,logos_priority:1,
  expiration_date:null,max_connections:null,server_timezone:null,last_update_time:1794309903421,
  user_catchup_type:null,user_catchup_hours:null,include_tv_channels:1,prev_groups_sorting:1,
- movie_groups_sorting:1,is_expanded_in_movies:1,is_expanded_in_series:1,series_groups_sorting:1,
+ movie_groups_sorting:1,is_expanded_in_movies:0,is_expanded_in_series:0,series_groups_sorting:1,
  update_interval_hours:24,are_new_groups_visible:1,are_new_movie_groups_visible:1,are_new_series_groups_visible:1,
  user_catchup_time_offset:null,prev_movie_groups_sorting:1,is_visible_in_all_channels:1,
  prev_series_groups_sorting:1,is_visible_in_all_favorites:1
@@ -20,9 +20,23 @@ function fail(e){console.error(e);msg(e?.message||String(e),true);}
 function normalizeMac(v){return String(v||"").toUpperCase().replace(/[^0-9A-F]/g,"");}
 function validMac(v){return /^[0-9A-F]{12}$/.test(v);}
 function colonMac(v){return v.match(/.{2}/g).join(":");}
-function hostIdentifier(raw){const u=new URL(raw);const p=u.hostname.toLowerCase().split(".");return p.length>1?p.slice(0,-1).join("."):p[0];}
+function hostIdentifier(raw){
+ const value=String(raw||"");
+ if(value.startsWith("xc:")){
+  try{const x=JSON.parse(value.slice(3));const u=new URL(x.h);const p=u.hostname.toLowerCase().split(".");return p.length>1?p.slice(0,-1).join("."):p[0];}catch{throw Error("Invalid Xtream URL. Expected xc:{\"h\":\"http(s)://host:port\",\"u\":\"username\",\"p\":\"password\",\"o\":\"ts\"}.");}
+ }
+ const u=new URL(value);const p=u.hostname.toLowerCase().split(".");return p.length>1?p.slice(0,-1).join("."):p[0];
+}
 function portalUrl(raw){const u=new URL(raw);const path=u.pathname.replace(/\/+$/,"");return u.origin+(path&&path!=="/"?path:"/c");}
 function playlistPayload(server,mac){
+ if(String(server.type).toLowerCase()==="xtream"){
+  const value=String(server.url||"");
+  if(!value.startsWith("xc:"))throw Error("For an Xtream server, the URL must use the xc:{...} format.");
+  let obj;try{obj=JSON.parse(value.slice(3));}catch{throw Error("The Xtream xc: URL contains invalid JSON.");}
+  if(!obj||typeof obj!=="object"||!obj.h||!obj.u||!obj.p)throw Error("Xtream URL must contain h, u and p fields.");
+  try{const u=new URL(obj.h);if(!["http:","https:"].includes(u.protocol))throw Error();}catch{throw Error("Xtream field h must be a valid http:// or https:// server address.");}
+  return value;
+ }
  const obj={s:portalUrl(server.url),rs:"",ua:1,l:"this.portal_protocol+'://'+this.portal_ip+'/portal.php'",sv:"",m:colonMac(mac),u:"",p:"",di:"",di2:"",sn:"007255N967172",adid:"eec3d2a615d9169e6d703904b89ec3d0"};
  return "s:"+JSON.stringify(obj);
 }
@@ -35,18 +49,38 @@ async function loadData(){
  renderAll();
 }
 const IDLE_KEY="bassemtv_idle_minutes";
+const LAST_ACTIVITY_KEY="bassemtv_last_activity";
+const PAGE_KEY="bassemtv_last_page";
+const VALID_PAGES=["overview","add-playlist","assignments","playlists","devices","new-devices","servers","settings","users","login-history"];
 function idleMinutes(){const n=Number(localStorage.getItem(IDLE_KEY)||15);return [5,10,15,30,60].includes(n)?n:15;}
 function updateIdleSetting(){const el=$("idleTimeoutSelect");if(el)el.value=String(idleMinutes());}
 function stopIdleTimer(){if(state.idleTimer)clearTimeout(state.idleTimer);state.idleTimer=null;}
-function recordActivity(){if(!state.user)return;state.lastActivity=Date.now();try{localStorage.setItem("bassemtv_last_activity",String(state.lastActivity));}catch{};armIdleTimer();}
+function recordActivity(){if(!state.user)return;state.lastActivity=Date.now();try{localStorage.setItem(LAST_ACTIVITY_KEY,String(state.lastActivity));}catch{};armIdleTimer();}
 function armIdleTimer(){stopIdleTimer();if(!state.user)return;const remaining=idleMinutes()*60000-(Date.now()-state.lastActivity);if(remaining<=0){expireIdleSession();return;}state.idleTimer=setTimeout(expireIdleSession,remaining);}
-async function expireIdleSession(){stopIdleTimer();if(!state.user)return;try{await state.sb.auth.signOut();}catch(e){console.error(e);}state.user=null;state.profile=null;$("loginView").classList.remove("hidden");$("appView").classList.add("hidden");showAuthView("loginForm");$("loginError").textContent="You were signed out after being inactive for "+idleMinutes()+" minutes.";}
-function startIdleProtection(){if(!state.user)return;let last=0;try{last=Number(localStorage.getItem("bassemtv_last_activity")||0);}catch{}state.lastActivity=last||Date.now();if(Date.now()-state.lastActivity>=idleMinutes()*60000){expireIdleSession();return;}recordActivity();}
+async function expireIdleSession(){
+ stopIdleTimer();if(!state.user)return;
+ try{localStorage.removeItem(LAST_ACTIVITY_KEY);}catch{}
+ const minutes=idleMinutes();
+ try{await state.sb.auth.signOut();}catch(e){console.error(e);}
+ state.user=null;state.profile=null;state.lastActivity=0;
+ $("loginView").classList.remove("hidden");$("appView").classList.add("hidden");showAuthView("loginForm");
+ $("loginError").textContent="You were signed out after being inactive for "+minutes+" minutes. Please sign in again.";
+}
+function startIdleProtection(freshSession=false){
+ if(!state.user)return;
+ if(freshSession){recordActivity();return true;}
+ let last=0;try{last=Number(localStorage.getItem(LAST_ACTIVITY_KEY)||0);}catch{}
+ state.lastActivity=last||Date.now();
+ if(Date.now()-state.lastActivity>=idleMinutes()*60000){expireIdleSession();return false;}
+ recordActivity();
+ return true;
+}
 ["pointerdown","keydown","touchstart","scroll","click"].forEach(evt=>document.addEventListener(evt,()=>{if(state.user)recordActivity();},{passive:true}));
-window.addEventListener("storage",e=>{if(e.key==="bassemtv_last_activity"&&state.user){state.lastActivity=Number(e.newValue)||Date.now();armIdleTimer();}});
+window.addEventListener("storage",e=>{if(e.key===LAST_ACTIVITY_KEY&&state.user){state.lastActivity=Number(e.newValue)||Date.now();armIdleTimer();}});
 function showPage(page){
  if((page==="users"||page==="login-history")&&state.profile?.role!=="superadmin")return;
  state.page=page;
+ try{localStorage.setItem(PAGE_KEY,page);}catch{}
  document.querySelectorAll(".page").forEach(x=>x.classList.toggle("hidden",x.id!=="page-"+page));
  document.querySelectorAll("#nav button[data-page]").forEach(x=>x.classList.toggle("active",x.dataset.page===page));
  $("pageTitle").textContent=({overview:"Overview","add-playlist":"Add playlists",assignments:"Assignments",playlists:"Playlists",devices:"Devices","new-devices":"New Devices",servers:"Servers",settings:"Settings",users:"Dashboard users","login-history":"Login history"})[page]||page;
@@ -67,8 +101,12 @@ function renderAll(){
 }
 function table(headers,rows){if(!rows.length)return '<div class="empty">No records found.</div>';return `<table><thead><tr>${headers.map(h=>`<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table>`;}
 function playlistParts(p){
- try{const raw=String(p.url||"");const payload=raw.startsWith("s:")?raw.slice(2):raw;const obj=JSON.parse(payload);return {host:String(obj.s||""),mac:String(obj.m||"").replace(/[^0-9A-Fa-f]/g,"").toUpperCase(),obj};}
- catch{return {host:"",mac:"",obj:null};}
+ try{
+  const raw=String(p.url||"");
+  if(raw.startsWith("xc:")){const obj=JSON.parse(raw.slice(3));return {host:String(obj.h||""),mac:"",obj,type:"xtream"};}
+  const payload=raw.startsWith("s:")?raw.slice(2):raw;const obj=JSON.parse(payload);
+  return {host:String(obj.s||""),mac:String(obj.m||"").replace(/[^0-9A-Fa-f]/g,"").toUpperCase(),obj,type:"stalker"};
+ }catch{return {host:"",mac:"",obj:null,type:"unknown"};}
 }
 function renderPlaylists(){
  const q=($("playlistTableSearch")?.value||"").toLowerCase();
@@ -155,7 +193,7 @@ async function createPlaylists(e){
  const invalid=macs.filter(m=>!validMac(m));if(invalid.length)throw Error("Invalid MAC address(es): "+invalid.join(", "));
  const devices=selectedValues($("playlistDevices"));const host=hostIdentifier(server.url);
  const existing=new Set(state.playlists.map(p=>p.name));const rows=[];
- for(const mac of macs){const name=`${host}_${mac}`;if(existing.has(name))continue;existing.add(name);rows.push({name,url:playlistPayload(server,mac),metadata:{...META}});}
+ for(const mac of macs){const name=`${host}_${mac}`;if(existing.has(name))continue;existing.add(name);const metadata={...META,is_expanded:0,is_expanded_in_movies:0,is_expanded_in_series:0,stalker_token:String(server.type).toLowerCase()==="xtream"?null:META.stalker_token};rows.push({name,url:playlistPayload(server,mac),metadata});}
  if(!rows.length)throw Error("All generated playlist names already exist.");
  const {data,error}=await state.sb.from("playlists").insert(rows).select("id,name");if(error)throw error;
  let assigned=0,assignError=null;
@@ -227,6 +265,11 @@ async function deleteDevice(id){const d=state.devices.find(x=>String(x.id)===Str
 async function deletePlaylist(id){const p=state.playlists.find(x=>String(x.id)===String(id));if(!p||!confirm(`Delete playlist "${p.name}"?`))return;try{const {error}=await state.sb.from("playlists").delete().eq("id",id);if(error)throw error;await loadData();msg("Playlist deleted.");}catch(e){fail(e);}}
 function editPlaylist(id){
  const p=state.playlists.find(x=>String(x.id)===String(id));if(!p)return;const parts=playlistParts(p);
+ if(parts.type==="xtream"){
+  openModal("Edit Xtream playlist",`<form id="editPlaylistForm" class="form-grid"><label class="span-2">Name<input id="editPName" required value="${esc(p.name)}"></label><p class="muted span-2">The Xtream xc: URL and credentials are preserved exactly. Only the playlist name can be edited here.</p><div class="span-2"><button class="btn primary">Save changes</button></div></form>`);
+  $("editPlaylistForm").onsubmit=async e=>{e.preventDefault();try{const {error}=await state.sb.from("playlists").update({name:$("editPName").value.trim()}).eq("id",id);if(error)throw error;closeModal();await loadData();msg("Xtream playlist updated.");}catch(e){fail(e);}};
+  return;
+ }
  openModal("Edit playlist",`<form id="editPlaylistForm" class="form-grid"><label class="span-2">Name<input id="editPName" required value="${esc(p.name)}"></label><label class="span-2">Host<input id="editPHost" required value="${esc(parts.host)}"></label><label class="span-2">MAC<input id="editPMac" required value="${esc(parts.mac)}" maxlength="17"></label><p class="muted span-2">Only name, host and MAC are editable here. Other playlist configuration is preserved.</p><div class="span-2"><button class="btn primary">Save changes</button></div></form>`);
  $("editPlaylistForm").onsubmit=async e=>{e.preventDefault();try{if(!parts.obj)throw Error("Playlist data format could not be parsed; refusing to overwrite it.");const mac=normalizeMac($("editPMac").value);if(!validMac(mac))throw Error("Enter a valid 12-character MAC address.");parts.obj.s=$("editPHost").value.trim();parts.obj.m=colonMac(mac);const {error}=await state.sb.from("playlists").update({name:$("editPName").value.trim(),url:"s:"+JSON.stringify(parts.obj)}).eq("id",id);if(error)throw error;closeModal();await loadData();msg("Playlist updated.");}catch(e){fail(e);}};
 }
@@ -254,7 +297,7 @@ async function getMyProfile(){
  if(error)throw error;
  return data;
 }
-async function acceptSession(user){
+async function acceptSession(user,freshSession=false){
  state.user=user;
  let profile;
  try{profile=await getMyProfile();}catch(e){await state.sb.auth.signOut();throw e;}
@@ -266,7 +309,7 @@ async function acceptSession(user){
    return false;
  }
  state.profile=profile;
- await enterApp();
+ await enterApp(freshSession);
  return true;
 }
 async function loadDashboardUsers(){
@@ -349,7 +392,7 @@ async function signInPasskey(){
  try{
   const {data,error}=await state.sb.auth.signInWithPasskey();if(error)throw error;
   if(!data?.user)throw Error("Passkey sign-in did not return a user.");
-  await acceptSession(data.user);
+  await acceptSession(data.user,true);
  }catch(e){setPasskeyMessage("passkeyLoginMessage",e.message||String(e),true);}
  finally{button.disabled=false;}
 }
@@ -363,7 +406,7 @@ async function boot(){
     const {data,error}=await state.sb.auth.getSession();
     if(error)throw error;
     if(data.session){
-      try{await acceptSession(data.session.user);}
+      try{await acceptSession(data.session.user,false);}
       catch(e){$("loginError").textContent=e.message;}
     }
     state.sb.auth.onAuthStateChange((event,session)=>{
@@ -389,13 +432,16 @@ async function boot(){
     $("authLoading")?.remove();
   }
 }
-async function enterApp(){
- startIdleProtection();
+async function enterApp(freshSession=false){
+ if(!startIdleProtection(freshSession))return;
  $("loginView").classList.add("hidden");$("appView").classList.remove("hidden");
  $("userEmail").textContent=state.user.email||"";$("settingsEmail").textContent=state.user.email||"";
  $("usersNav").classList.toggle("hidden",state.profile?.role!=="superadmin");
  $("loginHistoryNav").classList.toggle("hidden",state.profile?.role!=="superadmin");
  try{await loadData();}catch(e){fail(e);}
+ let saved="overview";try{const candidate=localStorage.getItem(PAGE_KEY)||"overview";if(VALID_PAGES.includes(candidate))saved=candidate;}catch{}
+ if((saved==="users"||saved==="login-history")&&state.profile?.role!=="superadmin")saved="overview";
+ showPage(saved);
 }
 $("passkeyLoginBtn").addEventListener("click",signInPasskey);
 $("registerPasskeyBtn").addEventListener("click",async()=>{const b=$("registerPasskeyBtn");b.disabled=true;setPasskeyMessage("passkeySettingsMessage","Starting passkey registration…");try{await registerPasskey();}catch(e){setPasskeyMessage("passkeySettingsMessage",e.message||String(e),true);}finally{b.disabled=false;}});
@@ -462,7 +508,7 @@ $("loginForm").addEventListener("submit",async e=>{
    refresh_token:result.session.refresh_token
   });
   if(error)throw error;
-  await acceptSession(result.user||data.user);
+  await acceptSession(result.user||data.user,true);
  }catch(e){$("loginError").textContent=e?.message||String(e);}
  finally{loginRequestPending=false;if(button)button.disabled=false;setLoginLockMessage();}
 });
@@ -482,7 +528,7 @@ $("newPasswordView").addEventListener("submit",async e=>{e.preventDefault();auth
  await state.sb.auth.signOut();showAuthView("loginForm");$("loginError").textContent="Password updated. You can now sign in.";
  }catch(e){authMessage("newPasswordMessage",e.message,true);}});
 document.querySelectorAll("[data-auth-view]").forEach(b=>b.addEventListener("click",()=>showAuthView(b.dataset.authView)));
-$("logoutBtn").onclick=async()=>{stopIdleTimer();await state.sb.auth.signOut();state.user=null;state.profile=null;};
+$("logoutBtn").onclick=async()=>{stopIdleTimer();try{localStorage.removeItem(LAST_ACTIVITY_KEY);}catch{}await state.sb.auth.signOut();state.user=null;state.profile=null;};
 $("idleTimeoutSelect").addEventListener("change",()=>{const n=Number($("idleTimeoutSelect").value);if(![5,10,15,30,60].includes(n))return;localStorage.setItem(IDLE_KEY,String(n));recordActivity();msg("Automatic logout set to "+n+" minutes.");});
 $("refreshUsersBtn").onclick=()=>loadDashboardUsers().catch(fail);
 $("refreshLoginHistoryBtn").onclick=()=>loadLoginHistory().catch(fail);

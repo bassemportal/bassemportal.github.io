@@ -142,7 +142,7 @@
       <section id="page-servers" class="page hidden">
         <div class="panel"><div class="panel-head"><div><h2>Servers</h2><p class="muted">Add or manage playlist hosts.</p></div></div>
           <form id="serverForm" class="form-grid"><input type="hidden" id="serverId">
-            <label>Name<input id="serverName" required></label><label>URL<input id="serverUrl" type="url" placeholder="http://example.com" required></label>
+            <label>Name<input id="serverName" required></label><label>URL / Xtream xc:<input id="serverUrl" type="text" placeholder="http://portal.example or xc:{...}" required></label>
             <label>Type<select id="serverType"><option value="xtream">xtream</option><option value="stalker">stalker</option><option value="other">other</option></select></label>
             <label>Sort order<input id="serverSort" type="number" value="0"></label>
             <div class="span-2"><button class="btn primary" id="serverSubmit">Add server</button><button class="btn ghost hidden" id="serverCancel" type="button">Cancel edit</button></div>
