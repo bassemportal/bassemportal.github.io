@@ -540,7 +540,16 @@ $("loginHistoryStatus").addEventListener("change",renderLoginHistory);
 $("loginHistorySearch").addEventListener("input",renderLoginHistory);
 $("usersTable").addEventListener("click",e=>{const b=e.target.closest("[data-user-status]");if(!b)return;const status=b.dataset.userStatus,id=b.dataset.userId;if(confirm(`Change this administrator's status to ${status}?`))updateDashboardUser(id,status).catch(fail);});
 
-$("refreshBtn").onclick=async()=>{try{await loadData();if(state.page==="new-devices")await loadNewDevices();msg("Data refreshed.");}catch(e){fail(e);}};
+$("refreshBtn").onclick=async()=>{
+  const currentPage=state.page;
+  try{
+    await loadData();
+    showPage(currentPage);
+    msg("Data refreshed.");
+  }catch(e){
+    fail(e);
+  }
+};
 $("refreshNewDevicesBtn").onclick=()=>loadNewDevices().catch(fail);
 $("nav").onclick=e=>{const b=e.target.closest("[data-page]");if(b)showPage(b.dataset.page);};
 document.addEventListener("click",e=>{const b=e.target.closest("[data-go]");if(b)showPage(b.dataset.go);actionClick(e);});
