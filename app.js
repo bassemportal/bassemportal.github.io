@@ -2,6 +2,8 @@
 "use strict";
 const cfg=window.BASSEM_CONFIG||{};
 const $=id=>document.getElementById(id);
+const DEFAULT_STALKER_EXPIRATION = 1805109000; // Same Unix-seconds value as the 15/03/2027 example.
+let playlistCheckResolver = null;
 const state={sb:null,user:null,profile:null,idleTimer:null,lastActivity:0,playlistMode:"stalker",selectedServers:{stalker:null,xtream:null},servers:[],playlists:[],devices:[],assignments:[],dashboardUsers:[],loginHistory:[],page:"overview",selectedPlaylistIds:new Set(),selectedDeviceMacs:new Set(),selectedDeviceIds:new Set(),selectedAssignmentKeys:new Set(),playlistAnchor:null,newDevices:[]};
 const META={
  is_vod:0,position:null,tvg_urls:"",tvg_shift:0,is_enabled:1,user_agent:null,auto_update:0,include_vod:1,is_expanded:0,
@@ -20,6 +22,62 @@ function fail(e){console.error(e);msg(e?.message||String(e),true);}
 function normalizeMac(v){return String(v||"").toUpperCase().replace(/[^0-9A-F]/g,"");}
 function validMac(v){return /^[0-9A-F]{12}$/.test(v);}
 function colonMac(v){return v.match(/.{2}/g).join(":");}
+
+function playlistExpiryTimestamp(p){
+ const raw=p?.metadata?.expiration_date ?? p?.expiration_date ?? null;
+ const value=Number(raw);
+ return Number.isFinite(value)&&value>0?Math.floor(value):null;
+}
+function formatPlaylistExpiry(p){
+ const timestamp=playlistExpiryTimestamp(p);
+ if(!timestamp)return "—";
+ const d=new Date(timestamp*1000);
+ return `${String(d.getUTCDate()).padStart(2,"0")}/${String(d.getUTCMonth()+1).padStart(2,"0")}/${d.getUTCFullYear()}`;
+}
+async function callStalkerCheck(host,mac){
+ const {data,error}=await state.sb.auth.getSession();
+ if(error)throw error;
+ const token=data.session?.access_token;
+ if(!token)throw Error("Your session expired. Please sign in again.");
+ const response=await fetch(`${cfg.SUPABASE_URL}/functions/v1/check-stalker`,{
+  method:"POST",
+  headers:{
+   "Content-Type":"application/json",
+   "Authorization":`Bearer ${token}`,
+   "apikey":cfg.SUPABASE_ANON_KEY||cfg.SUPABASE_PUBLISHABLE_KEY||cfg.ANON_KEY||""
+  },
+  body:JSON.stringify({host,mac:colonMac(mac)})
+ });
+ let result={};
+ try{result=await response.json();}catch{}
+ if(!response.ok){
+  return {...result,online:false,authenticated:false,http_status:response.status,error:result.error||`check-stalker failed (${response.status})`};
+ }
+ return result;
+}
+function finishPlaylistCheck(accepted){
+ const resolve=playlistCheckResolver;
+ playlistCheckResolver=null;
+ closeModal();
+ if(resolve)resolve(accepted);
+}
+function confirmAddUnverifiedPlaylist(name,result){
+ const details=result?.account_result||result?.error||result?.stage||"Portal could not be verified";
+ const status=result?.account_status||result?.handshake_status||result?.http_status||"No HTTP response";
+ return new Promise(resolve=>{
+  playlistCheckResolver=resolve;
+  openModal("Playlist could not be verified",`
+   <div class="form-grid">
+    <p class="span-2">The Stalker host/account check did not return a verified online result for <b>${esc(name)}</b>.</p>
+    <p class="muted span-2">Result: ${esc(details)} · HTTP ${esc(status)}</p>
+    <p class="span-2">If you continue, this playlist will be inserted with the default expiration date <b>15/03/2027</b>. Otherwise, cancel to insert nothing.</p>
+    <div class="span-2" style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap">
+     <button type="button" class="btn" data-playlist-check-choice="cancel">Cancel</button>
+     <button type="button" class="btn primary" data-playlist-check-choice="add">Add anyway</button>
+    </div>
+   </div>`);
+ });
+}
 function hostIdentifier(raw){const u=new URL(raw);const p=u.hostname.toLowerCase().split(".");return p.length>1?p.slice(0,-1).join("."):p[0];}
 function portalUrl(raw){const u=new URL(raw);const path=u.pathname.replace(/\/+$/,"");return u.origin+(path&&path!=="/"?path:"/c");}
 function playlistPayload(server,mac){
@@ -88,8 +146,8 @@ function playlistParts(p){
 }
 function renderPlaylists(){
  const q=($("playlistTableSearch")?.value||"").toLowerCase();
- const rows=state.playlists.filter(p=>{const parts=playlistParts(p);return (p.name+" "+parts.host+" "+parts.mac+" "+parts.username).toLowerCase().includes(q);}).map(p=>{const parts=playlistParts(p);return [esc(p.name),esc(parts.type),esc(parts.host||"—"),esc(parts.mac||parts.username||"—"),`<div class="table-actions"><button class="btn" data-edit-playlist="${p.id}">Edit</button><button class="btn" data-delete-playlist="${p.id}">Delete</button></div>`];});
- $("playlistTable").innerHTML=table(["Name","Type","Host","MAC / Username","Actions"],rows);
+ const rows=state.playlists.filter(p=>{const parts=playlistParts(p);return (p.name+" "+parts.host+" "+parts.mac+" "+parts.username).toLowerCase().includes(q);}).map(p=>{const parts=playlistParts(p);return [esc(p.name),esc(parts.type),esc(parts.host||"—"),esc(parts.mac||parts.username||"—"),esc(formatPlaylistExpiry(p)),`<div class="table-actions"><button class="btn" data-edit-playlist="${p.id}">Edit</button><button class="btn" data-delete-playlist="${p.id}">Delete</button></div>`];});
+ $("playlistTable").innerHTML=table(["Name","Type","Host","MAC / Username","Expiration","Actions"],rows);
 }
 function renderDevices(){
  const q=($("deviceTableSearch")?.value||"").toLowerCase();
@@ -178,26 +236,27 @@ function renderAssignments(){
  const pq=($("playlistSearch")?.value||"").toLowerCase(),dq=($("deviceSearch")?.value||"").toLowerCase();
  const visiblePlaylists=state.playlists.filter(p=>p.name.toLowerCase().includes(pq));
  const visibleDevices=state.devices.filter(d=>(d.mac+" "+d.name).toLowerCase().includes(dq));
- $("assignPlaylists").innerHTML=visiblePlaylists.map(p=>`<label class="check-row"><input type="checkbox" name="ap" value="${p.id}" ${state.selectedPlaylistIds.has(String(p.id))?"checked":""}><span>${esc(p.name)}</span></label>`).join("")||'<div class=empty>No playlists</div>';
+ $("assignPlaylists").innerHTML=visiblePlaylists.map(p=>`<label class="check-row"><input type="checkbox" name="ap" value="${p.id}" ${state.selectedPlaylistIds.has(String(p.id))?"checked":""}><span>${esc(p.name)} <small class="muted">· Expires: ${esc(formatPlaylistExpiry(p))}</small></span></label>`).join("")||'<div class=empty>No playlists</div>';
  $("assignDevices").innerHTML=visibleDevices.map(d=>`<label class="check-row"><input type="checkbox" name="ad" value="${esc(d.mac)}" ${state.selectedDeviceMacs.has(d.mac)?"checked":""}><span>${esc(d.name||d.mac)} <small>${esc(d.mac)}</small></span></label>`).join("")||'<div class=empty>No devices</div>';
  const allVisible=visiblePlaylists.length>0&&visiblePlaylists.every(p=>state.selectedPlaylistIds.has(String(p.id)));
  const selectAll=$("selectAllPlaylists");if(selectAll){selectAll.checked=allVisible;selectAll.indeterminate=!allVisible&&visiblePlaylists.some(p=>state.selectedPlaylistIds.has(String(p.id)));}
  const np=state.selectedPlaylistIds.size,nd=state.selectedDeviceMacs.size;
  $("assignmentCount").textContent=`${np} playlists × ${nd} devices = ${np*nd} possible links`;
- const lookup=new Map(state.playlists.map(p=>[String(p.id),p.name]));
+ const playlistLookup=new Map(state.playlists.map(p=>[String(p.id),p]));
  const aq=($("currentAssignmentSearch")?.value||"").trim().toLowerCase();
  const filteredAssignments=state.assignments.filter(a=>String(a.device_mac||"").toLowerCase().includes(aq));
  const rows=filteredAssignments.map(a=>{
-  const key=assignmentKey(a),checked=state.selectedAssignmentKeys.has(key)?"checked":"";
+  const key=assignmentKey(a),checked=state.selectedAssignmentKeys.has(key),p=playlistLookup.get(String(a.playlist_id));
   return [
-   `<input type="checkbox" class="assignment-row-check" data-assignment-key="${esc(key)}" ${checked} aria-label="Select ${esc(a.device_mac)} playlist assignment">`,
+   `<input type="checkbox" class="assignment-row-check" data-assignment-key="${esc(key)}" ${checked?"checked":""} aria-label="Select ${esc(a.device_mac)} playlist assignment">`,
    esc(a.device_mac),
-   esc(lookup.get(String(a.playlist_id))||("#"+a.playlist_id)),
+   esc(p?.name||("#"+a.playlist_id)),
+   esc(p?formatPlaylistExpiry(p):"—"),
    esc(a.assigned_at?new Date(a.assigned_at).toLocaleString():"—"),
    `<button class="btn" data-unassign-device="${esc(a.device_mac)}" data-unassign-playlist="${Number(a.playlist_id)}">Unassign</button>`
   ];
  });
- $("assignmentTable").innerHTML=table(["","Device MAC","Playlist","Assigned","Action"],rows);
+ $("assignmentTable").innerHTML=table(["","Device MAC","Playlist","Expiration","Assigned","Action"],rows);
  const allSelected=filteredAssignments.length>0&&filteredAssignments.every(a=>state.selectedAssignmentKeys.has(assignmentKey(a)));
  const someSelected=filteredAssignments.some(a=>state.selectedAssignmentKeys.has(assignmentKey(a)));
  const allCtl=$("selectAllAssignments");if(allCtl){allCtl.checked=allSelected;allCtl.indeterminate=!allSelected&&someSelected;}
@@ -235,7 +294,7 @@ async function unassignPlaylist(deviceMac, playlistId){
 }
 function refreshSelectionCount(){const np=state.selectedPlaylistIds.size,nd=state.selectedDeviceMacs.size;$("assignmentCount").textContent=`${np} playlists × ${nd} devices = ${np*nd} possible links`;const visible=state.playlists.filter(p=>p.name.toLowerCase().includes(($("playlistSearch").value||"").toLowerCase()));const all=visible.length>0&&visible.every(p=>state.selectedPlaylistIds.has(String(p.id)));const ctl=$("selectAllPlaylists");if(ctl){ctl.checked=all;ctl.indeterminate=!all&&visible.some(p=>state.selectedPlaylistIds.has(String(p.id)));}}
 function openModal(title,html){$("modalTitle").textContent=title;$("modalBody").innerHTML=html;$("modal").classList.remove("hidden");}
-function closeModal(){$("modal").classList.add("hidden");}
+function closeModal(){if(playlistCheckResolver){const resolve=playlistCheckResolver;playlistCheckResolver=null;resolve(false);} $("modal").classList.add("hidden");}
 function serverRows(type){return state.servers.filter(s=>Number(s.enabled)!==0&&String(s.type||"").toLowerCase()===type);}
 function renderServerPicker(type){
  const search=$(type+"ServerSearch"),results=$(type+"ServerResults"),selected=$(type+"ServerSelected"),hidden=$(type+"ServerId");
@@ -281,15 +340,43 @@ async function testPlaylistHost(type){
  }finally{button.disabled=false;button.textContent="Test host";}
 }
 async function createPlaylists(e){
- e.preventDefault();try{
+ e.preventDefault();
+ try{
   const mode=state.playlistMode,server=getPlaylistHost(mode);
-  const devices=selectedValues($("playlistDevices"));const existing=new Set(state.playlists.map(p=>p.name));const rows=[];
+  const devices=selectedValues($("playlistDevices"));
+  const existing=new Set(state.playlists.map(p=>p.name));
+  const rows=[];
   if(mode==="stalker"){
    const macs=[...new Set($("playlistMacs").value.split(/\r?\n/).map(normalizeMac).filter(Boolean))];
    if(!macs.length)throw Error("Enter at least one MAC address.");
    const invalid=macs.filter(m=>!validMac(m));if(invalid.length)throw Error("Invalid MAC address(es): "+invalid.join(", "));
    const host=hostIdentifier(server.url);
-   for(const mac of macs){const name=`${host}_${mac}`;if(existing.has(name))continue;existing.add(name);rows.push({name,url:playlistPayload(server,mac),metadata:{...META, is_expanded:0,is_expanded_in_movies:0,is_expanded_in_series:0}});}
+   const pending=[];
+   // Verify every MAC before inserting anything. Cancel on any failed verification
+   // leaves the entire batch uninserted.
+   for(const mac of macs){
+    const name=`${host}_${mac}`;
+    if(existing.has(name))continue;
+    existing.add(name);
+    let checkResult;
+    try{
+     checkResult=await callStalkerCheck(server.url,mac);
+    }catch(error){
+     checkResult={online:false,authenticated:false,error:error?.message||String(error),stage:"request"};
+    }
+    const verified=checkResult?.online===true&&checkResult?.authenticated===true&&checkResult?.account_result==="ACCOUNT_INFO_RECEIVED";
+    let expirationDate=null;
+    if(verified){
+     const candidate=Number(checkResult.expiration_date??checkResult.expiration_timestamp);
+     if(Number.isFinite(candidate)&&candidate>0)expirationDate=Math.floor(candidate);
+    }else{
+     const addAnyway=await confirmAddUnverifiedPlaylist(name,checkResult);
+     if(!addAnyway)throw Error("Playlist insertion cancelled. No playlists were inserted.");
+     expirationDate=DEFAULT_STALKER_EXPIRATION;
+    }
+    pending.push({name,url:playlistPayload(server,mac),metadata:{...META,is_expanded:0,is_expanded_in_movies:0,is_expanded_in_series:0,expiration_date:expirationDate}});
+   }
+   rows.push(...pending);
   }else{
    const username=$("xtreamUsername").value.trim(),password=$("xtreamPassword").value;
    if(!username||!password)throw Error("Enter both Xtream username and password.");
@@ -301,13 +388,23 @@ async function createPlaylists(e){
    rows.push({name,url,metadata});
   }
   if(!rows.length)throw Error("All generated playlist names already exist.");
-  const {data,error}=await state.sb.from("playlists").insert(rows).select("id,name");if(error)throw error;
+  const {data,error}=await state.sb.from("playlists").insert(rows).select("id,name");
+  if(error)throw error;
   let assigned=0,assignError=null;
-  if(devices.length){const links=[];for(const p of data)for(const mac of devices)links.push({device_mac:mac,playlist_id:p.id});const r=await state.sb.from("playlist_assignments").upsert(links,{onConflict:"device_mac,playlist_id",ignoreDuplicates:true});assignError=r.error;assigned=links.length;}
-  if(mode==="stalker")$("playlistMacs").value="";else{$("xtreamUsername").value="";$("xtreamPassword").value="";}
+  if(devices.length){
+   const links=[];for(const p of data)for(const mac of devices)links.push({device_mac:mac,playlist_id:p.id});
+   const r=await state.sb.from("playlist_assignments").upsert(links,{onConflict:"device_mac,playlist_id",ignoreDuplicates:true});
+   assignError=r.error;assigned=links.length;
+  }
+  if(mode==="stalker")$("playlistMacs").value="";
+  else{$("xtreamUsername").value="";$("xtreamPassword").value="";}
   $(mode+"CustomHost").value="";
-  [...$("playlistDevices").options].forEach(o=>o.selected=false);await loadData();msg(`${data.length} ${mode} playlist(s) created${devices.length?`. Assignment links processed: ${assigned}.`:"."}${assignError?" Assignment error: "+assignError.message:""}`,!!assignError);
- }catch(e){fail(e);}
+  [...$("playlistDevices").options].forEach(o=>o.selected=false);
+  await loadData();
+  msg(`${data.length} ${mode} playlist(s) created${devices.length?`. Assignment links processed: ${assigned}.`:"."}${assignError?" Assignment error: "+assignError.message:""}`,!!assignError);
+ }catch(e){
+  fail(e);
+ }
 }
 async function callNewDevicesApi(payload={}){
  const {data,error}=await state.sb.auth.getSession();if(error)throw error;
@@ -382,6 +479,7 @@ function editServer(id){const s=state.servers.find(x=>String(x.id)===String(id))
 async function saveServer(e){e.preventDefault();try{const id=$("serverId").value;const row={name:$("serverName").value.trim(),url:$("serverUrl").value.trim(),type:$("serverType").value,sort_order:Number($("serverSort").value||0)};const r=id?await state.sb.from("servers").update(row).eq("id",id):await state.sb.from("servers").insert(row);if(r.error)throw r.error;$("serverForm").reset();$("serverId").value="";$("serverSort").value="0";$("serverSubmit").textContent="Add server";$("serverCancel").classList.add("hidden");await loadData();msg(id?"Server updated.":"Server added.");}catch(e){fail(e);}}
 async function actionClick(e){
  const t=e.target.closest("button");if(!t)return;
+ if(t.dataset.playlistCheckChoice){finishPlaylistCheck(t.dataset.playlistCheckChoice==="add");return;}
  if(t.dataset.registerNewDevice!==undefined)openRegisterNewDevice(Number(t.dataset.registerNewDevice));
  if(t.dataset.unassignDevice&&t.dataset.unassignPlaylist)await unassignPlaylist(t.dataset.unassignDevice,t.dataset.unassignPlaylist);
  if(t.dataset.editPlaylist)editPlaylist(t.dataset.editPlaylist);
