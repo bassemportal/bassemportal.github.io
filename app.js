@@ -27,11 +27,24 @@ function playlistPayload(server,mac){
  return "s:"+JSON.stringify(obj);
 }
 function selectedValues(sel){return [...sel.selectedOptions].map(o=>o.value);}
+function newestFirst(rows,field){
+ return [...(rows||[])].sort((a,b)=>{
+  const ta=Date.parse(a?.[field]||"");
+  const tb=Date.parse(b?.[field]||"");
+  const va=Number.isFinite(ta)?ta:0;
+  const vb=Number.isFinite(tb)?tb:0;
+  return vb-va;
+ });
+}
 async function loadData(){
  const names=["servers","playlists","mac_devices","playlist_assignments"];
  const results=await Promise.all(names.map(t=>state.sb.from(t).select("*").limit(5000)));
  results.forEach((r,i)=>{if(r.error)throw new Error(names[i]+": "+r.error.message);});
- [state.servers,state.playlists,state.devices,state.assignments]=results.map(r=>r.data||[]);
+ const [servers,playlists,devices,assignments]=results.map(r=>r.data||[]);
+ state.servers=newestFirst(servers,"created_at");
+ state.playlists=newestFirst(playlists,"created_at");
+ state.devices=newestFirst(devices,"created_at");
+ state.assignments=newestFirst(assignments,"assigned_at");
  renderAll();
 }
 const IDLE_KEY="bassemtv_idle_minutes";
