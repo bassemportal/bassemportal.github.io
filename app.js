@@ -104,7 +104,7 @@ function renderDevices(){
  const rows=filtered.map(d=>{
   const seen=d.last_seen?new Date(d.last_seen).toLocaleString():"Never connected";
   const checked=state.selectedDeviceIds.has(String(d.id))?"checked":"";
-  return [`<input class="device-row-check" type="checkbox" data-device-select="${d.id}" ${checked} aria-label="Select ${esc(d.mac)}">`,esc(d.mac),esc(d.name),esc(d.last_model||"—"),esc(seen),Number(d.enabled)?"<span class=pill>Enabled</span>":"<span class=pill>Disabled</span>",`<div class="table-actions"><button class="btn" data-device-assignments="${d.id}">History</button><button class="btn" data-toggle-device="${d.id}">${Number(d.enabled)?"Disable":"Enable"}</button><button class="btn" data-delete-device="${d.id}">Delete</button></div>`];
+  return [`<input class="device-row-check" type="checkbox" data-device-select="${d.id}" ${checked} aria-label="Select ${esc(d.mac)}">`,esc(d.mac),esc(d.name),esc(d.last_model||"—"),esc(seen),Number(d.enabled)?"<span class=pill>Enabled</span>":"<span class=pill>Disabled</span>",`<div class="table-actions"><button class="btn" data-device-details="${d.id}">Details</button><button class="btn" data-toggle-device="${d.id}">${Number(d.enabled)?"Disable":"Enable"}</button><button class="btn" data-delete-device="${d.id}">Delete</button></div>`];
  });
  $("deviceTable").innerHTML=table(["","MAC","Name","Model","Last connection","Status","Actions"],rows);
  const all=filtered.length>0&&filtered.every(d=>state.selectedDeviceIds.has(String(d.id)));
@@ -123,6 +123,32 @@ async function showDeviceAssignments(id){
   const rows=(data||[]).map(a=>{const pl=lookup.get(String(a.playlist_id));return [esc(pl?.name||("Playlist #"+a.playlist_id)),esc(a.action==="unassigned"?"Unassigned":"Assigned"),esc(a.changed_at?new Date(a.changed_at).toLocaleString():"—")];});
   $("modalBody").innerHTML=table(["Playlist","Action","Date"],rows);
  }catch(e){$("modalBody").innerHTML=`<p class="error">Could not load playlist history: ${esc(e.message)}. Apply the included SQL migration in Supabase first.</p>`;}
+}
+async function showDeviceDetails(id){
+ const d=state.devices.find(x=>String(x.id)===String(id));if(!d)return;
+ const server=state.servers.find(x=>String(x.id)===String(d.server_id));
+ const assigned=state.assignments.filter(a=>String(a.device_mac).toUpperCase()===String(d.mac).toUpperCase());
+ const playlistMap=new Map(state.playlists.map(p=>[String(p.id),p]));
+ const assignedRows=assigned.map(a=>{const p=playlistMap.get(String(a.playlist_id));const parts=p?playlistParts(p):null;return [esc(p?.name||("Playlist #"+a.playlist_id)),esc(parts?.type||"—"),esc(parts?.host||"—"),esc(a.assigned_at?new Date(a.assigned_at).toLocaleString():"—")];});
+ const title=`Device details — ${d.mac}`;
+ openModal(title,`<div class="device-detail-grid">
+  <div><small>Device name</small><strong>${esc(d.name||"—")}</strong></div>
+  <div><small>MAC address</small><strong>${esc(d.mac)}</strong></div>
+  <div><small>Authorization</small><strong class="${Number(d.enabled)?"detail-enabled":"detail-disabled"}">${Number(d.enabled)?"Enabled":"Disabled"}</strong></div>
+  <div><small>Device model</small><strong>${esc(d.last_model||"—")}</strong></div>
+  <div><small>App version</small><strong>${esc(d.last_appver||"—")}</strong></div>
+  <div><small>Last seen</small><strong>${esc(d.last_seen?new Date(d.last_seen).toLocaleString():"Never connected")}</strong></div>
+  <div><small>Registered</small><strong>${esc(d.created_at?new Date(d.created_at).toLocaleString():"—")}</strong></div>
+  <div><small>Linked server</small><strong>${esc(server?.name||"No server")}</strong><small>${esc(server?.url||"")}</small></div>
+ </div>
+ <div class="detail-section"><h3>Current playlists (${assigned.length})</h3><div class="table-wrap">${table(["Playlist","Type","Host","Assigned"],assignedRows)}</div></div>
+ <div class="detail-section"><h3>Assignment history</h3><div id="deviceDetailHistory" class="table-wrap"><div class="empty">Loading history…</div></div></div>`);
+ try{
+  const {data,error}=await state.sb.from("playlist_assignment_history").select("device_mac,playlist_id,action,changed_at").eq("device_mac",d.mac).order("changed_at",{ascending:false}).limit(100);
+  if(error)throw error;
+  const historyRows=(data||[]).map(a=>[esc(playlistMap.get(String(a.playlist_id))?.name||("Playlist #"+a.playlist_id)),esc(a.action||"—"),esc(a.changed_at?new Date(a.changed_at).toLocaleString():"—")]);
+  if($("modalTitle").textContent===title&&!$("modal").classList.contains("hidden"))$("deviceDetailHistory").innerHTML=table(["Playlist","Action","Date"],historyRows);
+ }catch(e){if($("modalTitle").textContent===title&&!$("modal").classList.contains("hidden"))$("deviceDetailHistory").innerHTML=`<p class="muted">Assignment history could not be loaded: ${esc(e.message)}</p>`;}
 }
 async function bulkDeviceAction(action){
  const ids=[...state.selectedDeviceIds];if(!ids.length)return;
@@ -232,6 +258,28 @@ function getPlaylistHost(type){
  return {url:raw,name:custom?"One-time host":String(saved?.name||raw)};
 }
 function setPlaylistMode(mode){state.playlistMode=mode;const stalker=mode==="stalker";$("stalkerFields").classList.toggle("hidden",!stalker);$("xtreamFields").classList.toggle("hidden",stalker);$("stalkerModeBtn").classList.toggle("primary",stalker);$("xtreamModeBtn").classList.toggle("primary",!stalker);$("createPlaylistBtn").textContent=stalker?"Create Stalker playlists":"Create Xtream playlist";$("playlistMacs").required=stalker;$("xtreamUsername").required=!stalker;$("xtreamPassword").required=!stalker;updatePreview();}
+async function testPlaylistHost(type){
+ const button=$(type==="stalker"?"testStalkerHostBtn":"testXtreamHostBtn");
+ const status=$(type+"HostTestStatus");
+ try{
+  const host=getPlaylistHost(type);
+  const url=new URL(host.url);
+  if(!["http:","https:"].includes(url.protocol))throw Error("Only HTTP and HTTPS hosts can be tested.");
+  button.disabled=true;button.textContent="Testing…";status.className="host-test-status muted";status.textContent="Checking whether the host responds…";
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort(),10000);
+  try{
+   // no-cors allows a basic reachability check without requiring the IPTV host to enable browser CORS.
+   // The opaque response deliberately does not reveal the remote HTTP status or validate credentials.
+   await fetch(url.href,{method:"GET",mode:"no-cors",cache:"no-store",redirect:"follow",credentials:"omit",signal:controller.signal});
+   status.className="host-test-status host-test-ok";
+   status.textContent="Host responded. HTTP status and account credentials cannot be verified by this browser check.";
+  }finally{clearTimeout(timeout);}
+ }catch(e){
+  status.className="host-test-status host-test-warn";
+  status.textContent=e?.name==="AbortError"?"Timed out after 10 seconds. Host may be slow or unreachable.":(e?.message||"Request blocked by browser or network. This does not prove the host is offline.");
+ }finally{button.disabled=false;button.textContent="Test host";}
+}
 async function createPlaylists(e){
  e.preventDefault();try{
   const mode=state.playlistMode,server=getPlaylistHost(mode);
@@ -339,6 +387,7 @@ async function actionClick(e){
  if(t.dataset.editPlaylist)editPlaylist(t.dataset.editPlaylist);
  if(t.dataset.deletePlaylist)deletePlaylist(t.dataset.deletePlaylist);
  if(t.dataset.deleteDevice)deleteDevice(t.dataset.deleteDevice);
+ if(t.dataset.deviceDetails)showDeviceDetails(t.dataset.deviceDetails);
  if(t.dataset.deviceAssignments)showDeviceAssignments(t.dataset.deviceAssignments);
  if(t.dataset.toggleDevice){const d=state.devices.find(x=>String(x.id)===t.dataset.toggleDevice);try{const {error}=await state.sb.from("mac_devices").update({enabled:Number(d.enabled)?0:1}).eq("id",d.id);if(error)throw error;await loadData();}catch(e){fail(e);}}
  if(t.dataset.editServer)editServer(t.dataset.editServer);
@@ -616,7 +665,7 @@ $("refreshBtn").onclick=async()=>{
 $("refreshNewDevicesBtn").onclick=()=>loadNewDevices().catch(fail);
 $("nav").onclick=e=>{const b=e.target.closest("[data-page]");if(b)showPage(b.dataset.page);};
 document.addEventListener("click",e=>{const b=e.target.closest("[data-go]");if(b)showPage(b.dataset.go);actionClick(e);});
-$("playlistForm").addEventListener("submit",createPlaylists);setPlaylistMode("stalker");$("deviceForm").addEventListener("submit",addDevice);$("assignBtn").onclick=assignBulk;$("serverForm").addEventListener("submit",saveServer);
+$("playlistForm").addEventListener("submit",createPlaylists);$("testStalkerHostBtn").onclick=()=>testPlaylistHost("stalker");$("testXtreamHostBtn").onclick=()=>testPlaylistHost("xtream");setPlaylistMode("stalker");$("deviceForm").addEventListener("submit",addDevice);$("assignBtn").onclick=assignBulk;$("serverForm").addEventListener("submit",saveServer);
 $("serverCancel").onclick=()=>{$("serverForm").reset();$("serverId").value="";$("serverSort").value="0";$("serverSubmit").textContent="Add server";$("serverCancel").classList.add("hidden");};
 $("modalClose").onclick=closeModal;$("modal").onclick=e=>{if(e.target===$("modal"))closeModal();};
 ["playlistSearch","deviceSearch","currentAssignmentSearch"].forEach(id=>$(id).addEventListener("input",renderAssignments));
@@ -635,9 +684,9 @@ $("selectAllPlaylists").addEventListener("change",e=>{const visible=state.playli
 $("stalkerModeBtn").onclick=()=>setPlaylistMode("stalker");$("xtreamModeBtn").onclick=()=>setPlaylistMode("xtream");
 ["stalker","xtream"].forEach(type=>$(type+"ServerSearch").addEventListener("input",()=>renderServerPicker(type)));
 $("stalkerServerResults").addEventListener("click",pickServer);$("xtreamServerResults").addEventListener("click",pickServer);
-document.addEventListener("click",e=>{const clear=e.target.closest("[data-clear-server]");if(clear){state.selectedServers[clear.dataset.clearServer]=null;$(clear.dataset.clearServer+"ServerSearch").value="";renderServerPicker(clear.dataset.clearServer);updatePreview();}});
-function pickServer(e){const b=e.target.closest("[data-pick-server]");if(!b)return;const type=b.dataset.pickServer;state.selectedServers[type]=state.servers.find(x=>String(x.id)===String(b.dataset.serverId))||null;$(type+"ServerSearch").value="";renderServerPicker(type);updatePreview();}
-["playlistMacs","xtreamUsername","stalkerCustomHost","xtreamCustomHost"].forEach(id=>$(id).addEventListener("input",updatePreview));
+document.addEventListener("click",e=>{const clear=e.target.closest("[data-clear-server]");if(clear){const type=clear.dataset.clearServer;state.selectedServers[type]=null;$(type+"ServerSearch").value="";$(type+"HostTestStatus").textContent="Not tested";$(type+"HostTestStatus").className="host-test-status muted";renderServerPicker(type);updatePreview();}});
+function pickServer(e){const b=e.target.closest("[data-pick-server]");if(!b)return;const type=b.dataset.pickServer;state.selectedServers[type]=state.servers.find(x=>String(x.id)===String(b.dataset.serverId))||null;$(type+"ServerSearch").value="";$(type+"HostTestStatus").textContent="Not tested";$(type+"HostTestStatus").className="host-test-status muted";renderServerPicker(type);updatePreview();}
+["playlistMacs","xtreamUsername","stalkerCustomHost","xtreamCustomHost"].forEach(id=>$(id).addEventListener("input",()=>{updatePreview();if(id.includes("stalker")){$("stalkerHostTestStatus").textContent="Not tested";$("stalkerHostTestStatus").className="host-test-status muted";}if(id.includes("xtream")){$("xtreamHostTestStatus").textContent="Not tested";$("xtreamHostTestStatus").className="host-test-status muted";}}));
 function updatePreview(){const type=state.playlistMode;let name="Choose a saved server or enter a one-time host URL.";try{const host=getPlaylistHost(type);if(type==="stalker"){const mac=normalizeMac($("playlistMacs").value.split(/\r?\n/)[0]);if(validMac(mac))name=`${hostIdentifier(host.url)}_${mac}`;}else{const u=$("xtreamUsername").value.trim();if(u)name=`${hostIdentifier(host.url)}_${u}`;}}catch{}$("namePreview").textContent=name;}
 if("serviceWorker" in navigator)window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(()=>{}));
 boot();
