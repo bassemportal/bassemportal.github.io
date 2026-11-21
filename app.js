@@ -221,10 +221,20 @@ function renderServerPicker(type){
  const matches=serverRows(type).filter(x=>(String(x.name)+" "+String(x.url)).toLowerCase().includes(q)).slice(0,100);
  results.innerHTML=matches.map(x=>`<button type="button" class="server-picker-option ${chosen&&String(chosen.id)===String(x.id)?"selected":""}" data-pick-server="${type}" data-server-id="${esc(x.id)}"><b>${esc(x.name)}</b><small>${esc(x.url)}</small></button>`).join("")||'<div class="empty">No matching '+type+' servers</div>';
 }
+function getPlaylistHost(type){
+ const custom=$(type+"CustomHost").value.trim();
+ const saved=state.selectedServers[type];
+ if(!custom&&saved&&!serverRows(type).some(x=>String(x.id)===String(saved.id)))throw Error("The selected saved server is no longer available. Choose another server or enter a one-time host URL.");
+ const raw=custom||String(saved?.url||"").trim();
+ if(!raw)throw Error("Choose a saved "+type+" server or enter a one-time host URL.");
+ let parsed;try{parsed=new URL(raw);}catch{throw Error("Enter a valid "+type+" host URL.");}
+ if(!["http:","https:"].includes(parsed.protocol)||!parsed.hostname)throw Error("The host must use HTTP or HTTPS.");
+ return {url:raw,name:custom?"One-time host":String(saved?.name||raw)};
+}
 function setPlaylistMode(mode){state.playlistMode=mode;const stalker=mode==="stalker";$("stalkerFields").classList.toggle("hidden",!stalker);$("xtreamFields").classList.toggle("hidden",stalker);$("stalkerModeBtn").classList.toggle("primary",stalker);$("xtreamModeBtn").classList.toggle("primary",!stalker);$("createPlaylistBtn").textContent=stalker?"Create Stalker playlists":"Create Xtream playlist";$("playlistMacs").required=stalker;$("xtreamUsername").required=!stalker;$("xtreamPassword").required=!stalker;updatePreview();}
 async function createPlaylists(e){
  e.preventDefault();try{
-  const mode=state.playlistMode,server=state.selectedServers[mode];if(!server||!serverRows(mode).some(x=>String(x.id)===String(server.id)))throw Error("Choose a valid "+mode+" server.");
+  const mode=state.playlistMode,server=getPlaylistHost(mode);
   const devices=selectedValues($("playlistDevices"));const existing=new Set(state.playlists.map(p=>p.name));const rows=[];
   if(mode==="stalker"){
    const macs=[...new Set($("playlistMacs").value.split(/\r?\n/).map(normalizeMac).filter(Boolean))];
@@ -247,6 +257,7 @@ async function createPlaylists(e){
   let assigned=0,assignError=null;
   if(devices.length){const links=[];for(const p of data)for(const mac of devices)links.push({device_mac:mac,playlist_id:p.id});const r=await state.sb.from("playlist_assignments").upsert(links,{onConflict:"device_mac,playlist_id",ignoreDuplicates:true});assignError=r.error;assigned=links.length;}
   if(mode==="stalker")$("playlistMacs").value="";else{$("xtreamUsername").value="";$("xtreamPassword").value="";}
+  $(mode+"CustomHost").value="";
   [...$("playlistDevices").options].forEach(o=>o.selected=false);await loadData();msg(`${data.length} ${mode} playlist(s) created${devices.length?`. Assignment links processed: ${assigned}.`:"."}${assignError?" Assignment error: "+assignError.message:""}`,!!assignError);
  }catch(e){fail(e);}
 }
@@ -626,8 +637,8 @@ $("stalkerModeBtn").onclick=()=>setPlaylistMode("stalker");$("xtreamModeBtn").on
 $("stalkerServerResults").addEventListener("click",pickServer);$("xtreamServerResults").addEventListener("click",pickServer);
 document.addEventListener("click",e=>{const clear=e.target.closest("[data-clear-server]");if(clear){state.selectedServers[clear.dataset.clearServer]=null;$(clear.dataset.clearServer+"ServerSearch").value="";renderServerPicker(clear.dataset.clearServer);updatePreview();}});
 function pickServer(e){const b=e.target.closest("[data-pick-server]");if(!b)return;const type=b.dataset.pickServer;state.selectedServers[type]=state.servers.find(x=>String(x.id)===String(b.dataset.serverId))||null;$(type+"ServerSearch").value="";renderServerPicker(type);updatePreview();}
-["playlistMacs","xtreamUsername"].forEach(id=>$(id).addEventListener("input",updatePreview));
-function updatePreview(){const type=state.playlistMode,s=state.selectedServers[type];let name="Select a server and enter the playlist details.";if(s&&type==="stalker"){const mac=normalizeMac($("playlistMacs").value.split(/\r?\n/)[0]);if(validMac(mac))name=`${hostIdentifier(s.url)}_${mac}`;}else if(s&&type==="xtream"){const u=$("xtreamUsername").value.trim();if(u)name=`${hostIdentifier(s.url)}_${u}`;}$("namePreview").textContent=name;}
+["playlistMacs","xtreamUsername","stalkerCustomHost","xtreamCustomHost"].forEach(id=>$(id).addEventListener("input",updatePreview));
+function updatePreview(){const type=state.playlistMode;let name="Choose a saved server or enter a one-time host URL.";try{const host=getPlaylistHost(type);if(type==="stalker"){const mac=normalizeMac($("playlistMacs").value.split(/\r?\n/)[0]);if(validMac(mac))name=`${hostIdentifier(host.url)}_${mac}`;}else{const u=$("xtreamUsername").value.trim();if(u)name=`${hostIdentifier(host.url)}_${u}`;}}catch{}$("namePreview").textContent=name;}
 if("serviceWorker" in navigator)window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(()=>{}));
 boot();
 })();
