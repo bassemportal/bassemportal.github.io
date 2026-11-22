@@ -5,6 +5,7 @@ const $=id=>document.getElementById(id);
 let playlistCheckResolver = null;
 let playlistBatchResolver = null;
 let testedStalkerHost = null;
+let testedXtreamHost = null;
 const state={sb:null,user:null,profile:null,idleTimer:null,lastActivity:0,playlistMode:"stalker",selectedServers:{stalker:null,xtream:null},servers:[],playlists:[],devices:[],assignments:[],dashboardUsers:[],loginHistory:[],page:"overview",selectedPlaylistIds:new Set(),selectedDeviceMacs:new Set(),selectedDeviceIds:new Set(),selectedAssignmentKeys:new Set(),playlistAnchor:null,newDevices:[]};
 const META={
  is_vod:0,position:null,tvg_urls:"",tvg_shift:0,is_enabled:1,user_agent:null,auto_update:0,include_vod:1,is_expanded:0,
@@ -48,6 +49,53 @@ async function callStalkerCheck(host,mac){
   return {...result,online:false,authenticated:false,http_status:response.status,error:result.error||`check-stalker failed (${response.status})`};
  }
  return result;
+}
+const XTREAM_CHECK_FUNCTION="check-xtream";
+async function callXtreamCheck(host,username,password){
+ const {data:{session}}=await state.sb.auth.getSession();
+ if(!session?.access_token)throw Error("Your dashboard session expired. Sign in again.");
+ const response=await fetch(`${String(cfg.SUPABASE_URL||"").replace(/\/$/,"")}/functions/v1/${XTREAM_CHECK_FUNCTION}`,{
+  method:"POST",
+  headers:{"Content-Type":"application/json","Authorization":`Bearer ${session.access_token}`,"apikey":cfg.SUPABASE_ANON_KEY},
+  body:JSON.stringify({host,username,password})
+ });
+ let result={};try{result=await response.json();}catch{}
+ if(!response.ok)throw Error(result.error||`Xtream checker returned HTTP ${response.status}. Deploy the check-xtream Edge Function first.`);
+ return result;
+}
+function xtreamExpiryLabel(timestamp){
+ const n=Number(timestamp);if(!Number.isFinite(n)||n<=0)return "Not provided";
+ const d=new Date(Math.floor(n)*1000);
+ return `${String(d.getUTCDate()).padStart(2,"0")}/${String(d.getUTCMonth()+1).padStart(2,"0")}/${d.getUTCFullYear()}`;
+}
+function confirmXtreamCreateAnyway(result){
+ const reason=result?.credentials_status==="invalid"?"The Xtream API rejected these credentials.":result?.credentials_status==="unavailable"?"The Xtream account API could not be reached, so the credentials could not be verified.":"The account was verified, but no usable expiration date was provided.";
+ return new Promise(resolve=>{
+  playlistCheckResolver=resolve;
+  openModal("Xtream account could not be fully verified",`<div class="form-grid">
+   <p class="span-2">${esc(reason)}</p>
+   <p class="muted span-2">Host status: ${result?.host_reachable===true?"Responding":result?.host_reachable===false?"Host probe failed":"Unknown"} · Account check: ${esc(result?.credentials_status||"unverified")}</p>
+   <p class="span-2">If you choose <b>Create anyway</b>, the playlist will be saved with <b>expiration_date = null</b>.</p>
+   <div class="span-2" style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap"><button type="button" class="btn" data-playlist-check-choice="cancel">Cancel</button><button type="button" class="btn primary" data-playlist-check-choice="add">Create anyway</button></div>
+  </div>`);
+ });
+}
+function showXtreamTestResult(host,username,result){
+ const valid=result?.credentials_status==="valid";
+ const hostText=result?.host_reachable===true?"Responding":result?.host_reachable===false?"Probe failed / unreachable":"Unknown";
+ const accountText=valid?"Credentials accepted":result?.credentials_status==="invalid"?"Credentials rejected":"Could not verify credentials";
+ const expiry=valid?xtreamExpiryLabel(result?.expiration_timestamp):"Not available";
+ const title=valid?"Xtream account verified":result?.credentials_status==="invalid"?"Xtream credentials rejected":"Xtream account could not be verified";
+ openModal(title,`<div class="form-grid">
+  <p class="span-2"><b>Host status:</b> ${esc(hostText)}</p>
+  <p class="span-2"><b>Account status:</b> ${esc(accountText)}</p>
+  <p class="span-2"><b>Host:</b> ${esc(host)}</p>
+  <p class="span-2"><b>Username:</b> ${esc(username)}</p>
+  <p class="span-2"><b>Expiration date:</b> ${esc(expiry)}</p>
+  ${result?.message?`<p class="muted span-2">${esc(result.message)}</p>`:""}
+  <p class="muted span-2">The host probe and credential check are independent. A failed host probe does not automatically mean the credentials are invalid.</p>
+  <div class="span-2" style="display:flex;justify-content:flex-end"><button type="button" class="btn" data-close-result="1">OK</button></div>
+ </div>`);
 }
 function finishPlaylistCheck(accepted){
  const resolve=playlistCheckResolver;
@@ -406,6 +454,17 @@ async function testPlaylistHost(type){
    status.textContent=result?.online===true&&result?.authenticated===true?"Server online · MAC authorized":"Test completed · See result";
    return;
   }
+  if(type==="xtream"){
+   const username=$("xtreamUsername").value.trim(),password=$("xtreamPassword").value;
+   if(!username||!password)throw Error("Enter both Xtream username and password before testing.");
+   status.textContent="Checking host and Xtream credentials…";
+   const result=await callXtreamCheck(host.url,username,password);
+   testedXtreamHost={hostUrl:host.url,username,password,result};
+   status.className="host-test-status "+(result.credentials_status==="valid"?"host-test-ok":"host-test-warn");
+   status.textContent=result.credentials_status==="valid"?"Xtream credentials verified":"Check completed · See result";
+   showXtreamTestResult(host.url,username,result);
+   return;
+  }
   const controller=new AbortController();
   const timeout=setTimeout(()=>controller.abort(),10000);
   try{
@@ -507,8 +566,22 @@ async function createPlaylists(e){
    const host=String(server.url||"").trim();if(!/^https?:\/\//i.test(host))throw Error("The selected Xtream server must have an HTTP or HTTPS host URL.");
    const name=`${hostIdentifier(host)}_${username}`;
    if(existing.has(name))throw Error("A playlist named "+name+" already exists.");
+   // Always run the account check on Create Playlist. Host probe failure is reported separately and never short-circuits this request.
+   const result=await callXtreamCheck(host,username,password);
+   const verified=result?.credentials_status==="valid";
+   const candidate=Number(result?.expiration_timestamp);
+   const hasExpiry=verified&&Number.isFinite(candidate)&&candidate>0;
+   if(!hasExpiry){
+    const accepted=await new Promise(resolve=>{playlistCheckResolver=resolve;openModal("Xtream account could not be fully verified",`<div class="form-grid">
+     <p class="span-2">${esc(result?.credentials_status==="invalid"?"The Xtream API rejected these credentials.":result?.credentials_status==="unavailable"?"The account API could not be reached, so the credentials could not be verified.":"The account was verified, but no usable expiration date was provided.")}</p>
+     <p class="muted span-2">Host status: ${result?.host_reachable===true?"Responding":result?.host_reachable===false?"Probe failed / unreachable":"Unknown"} · Account check: ${esc(result?.credentials_status||"unverified")}</p>
+     <p class="span-2">Create anyway will save this playlist with <b>expiration_date = null</b>.</p>
+     <div class="span-2" style="display:flex;gap:10px;justify-content:flex-end"><button type="button" class="btn" data-playlist-check-choice="cancel">Cancel</button><button type="button" class="btn primary" data-playlist-check-choice="add">Create anyway</button></div>
+    </div>`);});
+    if(!accepted)throw Error("Xtream playlist creation cancelled. Nothing was inserted.");
+   }
    const url="xc:"+JSON.stringify({h:host,u:username,p:password,o:"ts"});
-   const metadata={...META,is_expanded:0,is_expanded_in_movies:0,is_expanded_in_series:0,stalker_token:null};
+   const metadata={...META,is_expanded:0,is_expanded_in_movies:0,is_expanded_in_series:0,stalker_token:null,expiration_date:hasExpiry?Math.floor(candidate):null};
    rows.push({name,url,metadata});
   }
   const {data,error}=await state.sb.from("playlists").insert(rows).select("id,name");
@@ -908,9 +981,9 @@ $("selectAllPlaylists").addEventListener("change",e=>{const visible=state.playli
 $("stalkerModeBtn").onclick=()=>setPlaylistMode("stalker");$("xtreamModeBtn").onclick=()=>setPlaylistMode("xtream");
 ["stalker","xtream"].forEach(type=>$(type+"ServerSearch").addEventListener("input",()=>renderServerPicker(type)));
 $("stalkerServerResults").addEventListener("click",pickServer);$("xtreamServerResults").addEventListener("click",pickServer);
-document.addEventListener("click",e=>{const clear=e.target.closest("[data-clear-server]");if(clear){const type=clear.dataset.clearServer;state.selectedServers[type]=null;if(type==="stalker")testedStalkerHost=null;$(type+"ServerSearch").value="";$(type+"HostTestStatus").textContent="Not tested";$(type+"HostTestStatus").className="host-test-status muted";renderServerPicker(type);updatePreview();}});
-function pickServer(e){const b=e.target.closest("[data-pick-server]");if(!b)return;const type=b.dataset.pickServer;if(type==="stalker")testedStalkerHost=null;state.selectedServers[type]=state.servers.find(x=>String(x.id)===String(b.dataset.serverId))||null;$(type+"ServerSearch").value="";$(type+"HostTestStatus").textContent="Not tested";$(type+"HostTestStatus").className="host-test-status muted";renderServerPicker(type);updatePreview();}
-["playlistMacs","xtreamUsername","stalkerCustomHost","xtreamCustomHost"].forEach(id=>$(id).addEventListener("input",()=>{updatePreview();if(id.includes("stalker")){testedStalkerHost=null;$("stalkerHostTestStatus").textContent="Not tested";$("stalkerHostTestStatus").className="host-test-status muted";}if(id.includes("xtream")){$("xtreamHostTestStatus").textContent="Not tested";$("xtreamHostTestStatus").className="host-test-status muted";}}));
+document.addEventListener("click",e=>{const clear=e.target.closest("[data-clear-server]");if(clear){const type=clear.dataset.clearServer;state.selectedServers[type]=null;if(type==="stalker")testedStalkerHost=null;else testedXtreamHost=null;$(type+"ServerSearch").value="";$(type+"HostTestStatus").textContent="Not tested";$(type+"HostTestStatus").className="host-test-status muted";renderServerPicker(type);updatePreview();}});
+function pickServer(e){const b=e.target.closest("[data-pick-server]");if(!b)return;const type=b.dataset.pickServer;if(type==="stalker")testedStalkerHost=null;else testedXtreamHost=null;state.selectedServers[type]=state.servers.find(x=>String(x.id)===String(b.dataset.serverId))||null;$(type+"ServerSearch").value="";$(type+"HostTestStatus").textContent="Not tested";$(type+"HostTestStatus").className="host-test-status muted";renderServerPicker(type);updatePreview();}
+["playlistMacs","xtreamUsername","stalkerCustomHost","xtreamCustomHost"].forEach(id=>$(id).addEventListener("input",()=>{updatePreview();if(id.includes("stalker")){testedStalkerHost=null;$("stalkerHostTestStatus").textContent="Not tested";$("stalkerHostTestStatus").className="host-test-status muted";}if(id.includes("xtream")){testedXtreamHost=null;$("xtreamHostTestStatus").textContent="Not tested";$("xtreamHostTestStatus").className="host-test-status muted";}}));
 function updatePreview(){const type=state.playlistMode;let name="Choose a saved server or enter a one-time host URL.";try{const host=getPlaylistHost(type);if(type==="stalker"){const mac=normalizeMac($("playlistMacs").value.split(/\r?\n/)[0]);if(validMac(mac))name=`${hostIdentifier(host.url)}_${mac}`;}else{const u=$("xtreamUsername").value.trim();if(u)name=`${hostIdentifier(host.url)}_${u}`;}}catch{}$("namePreview").textContent=name;}
 if("serviceWorker" in navigator)window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(()=>{}));
 boot();
