@@ -3,6 +3,7 @@
 const cfg=window.BASSEM_CONFIG||{};
 const $=id=>document.getElementById(id);
 let playlistCheckResolver = null;
+let testedStalkerHost = null;
 const state={sb:null,user:null,profile:null,idleTimer:null,lastActivity:0,playlistMode:"stalker",selectedServers:{stalker:null,xtream:null},servers:[],playlists:[],devices:[],assignments:[],dashboardUsers:[],loginHistory:[],page:"overview",selectedPlaylistIds:new Set(),selectedDeviceMacs:new Set(),selectedDeviceIds:new Set(),selectedAssignmentKeys:new Set(),playlistAnchor:null,newDevices:[]};
 const META={
  is_vod:0,position:null,tvg_urls:"",tvg_shift:0,is_enabled:1,user_agent:null,auto_update:0,include_vod:1,is_expanded:0,
@@ -348,9 +349,41 @@ function showStalkerHostTestResult(host,mac,result){
   <p class="span-2"><b>MAC tested:</b> ${esc(colonMac(mac))}</p>
   <p class="span-2"><b>Expiration date:</b> ${authenticated?esc(expiryDate):"Not available"}</p>
   <p class="muted span-2">${esc(detail)} · HTTP ${esc(statusCode)}</p>
-  <div class="span-2" style="display:flex;justify-content:flex-end"><button type="button" class="btn primary" data-close-result="1">OK</button></div>
+  <p class="muted span-2">You can create a playlist using this exact test result without running the check again. Only the MAC tested above will be added.</p>
+  <div class="span-2" style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap">
+   <button type="button" class="btn" data-close-result="1">OK</button>
+   <button type="button" class="btn primary" data-create-tested-stalker="1">${authenticated&&Number.isFinite(expiry)&&expiry>0?"Create playlist":"Create playlist anyway"}</button>
+  </div>
  </div>`);
 }
+async function createTestedStalkerPlaylist(){
+ const tested=testedStalkerHost;
+ if(!tested)throw Error("No recent Stalker test result is available. Run Test host first.");
+ const host=getPlaylistHost("stalker");
+ const currentMac=normalizeMac($("playlistMacs").value.split(/\r?\n/).map(x=>x.trim()).find(Boolean)||"");
+ if(host.url!==tested.hostUrl||currentMac!==tested.mac)throw Error("The host or MAC changed after testing. Run Test host again before creating this playlist.");
+ const name=`${hostIdentifier(host.url)}_${tested.mac}`;
+ if(state.playlists.some(p=>p.name===name))throw Error(`A playlist named ${name} already exists.`);
+ const candidate=Number(tested.result?.expiration_timestamp);
+ const expirationDate=tested.result?.authenticated===true&&Number.isFinite(candidate)&&candidate>0?Math.floor(candidate):null;
+ const row={name,url:playlistPayload(host,tested.mac),metadata:{...META,is_expanded:0,is_expanded_in_movies:0,is_expanded_in_series:0,expiration_date:expirationDate}};
+ const {data,error}=await state.sb.from("playlists").insert([row]).select("id,name");
+ if(error)throw error;
+ const devices=selectedValues($("playlistDevices"));
+ let assignError=null,assigned=0;
+ if(devices.length){
+  const links=[];for(const playlist of data)for(const mac of devices)links.push({device_mac:mac,playlist_id:playlist.id});
+  const result=await state.sb.from("playlist_assignments").upsert(links,{onConflict:"device_mac,playlist_id",ignoreDuplicates:true});
+  assignError=result.error;assigned=links.length;
+ }
+ testedStalkerHost=null;
+ $("playlistMacs").value="";$("stalkerCustomHost").value="";
+ [...$("playlistDevices").options].forEach(o=>o.selected=false);
+ closeModal();
+ await loadData();
+ msg(`Stalker playlist created from the previous test${expirationDate?` · Expiration: ${new Date(expirationDate*1000).toISOString().slice(0,10)}`:" · No expiration date (null)"}${devices.length?` · Assignment links processed: ${assigned}`:""}${assignError?` · Assignment error: ${assignError.message}`:""}`,!!assignError);
+}
+
 async function testPlaylistHost(type){
  const button=$(type==="stalker"?"testStalkerHostBtn":"testXtreamHostBtn");
  const status=$(type+"HostTestStatus");
@@ -366,6 +399,7 @@ async function testPlaylistHost(type){
    let result;
    try{result=await callStalkerCheck(host.url,mac);}
    catch(error){result={online:false,authenticated:false,error:error?.message||String(error),stage:"request"};}
+   testedStalkerHost={hostUrl:host.url,mac,result};
    showStalkerHostTestResult(host,mac,result);
    status.className="host-test-status "+(result?.online===true&&result?.authenticated===true?"host-test-ok": "host-test-warn");
    status.textContent=result?.online===true&&result?.authenticated===true?"Server online · MAC authorized":"Test completed · See result";
@@ -526,6 +560,7 @@ async function actionClick(e){
  const t=e.target.closest("button");if(!t)return;
  if(t.dataset.playlistCheckChoice){finishPlaylistCheck(t.dataset.playlistCheckChoice==="add");return;}
  if(t.dataset.closeResult!==undefined){closeModal();return;}
+ if(t.dataset.createTestedStalker!==undefined){try{t.disabled=true;t.textContent="Creating…";await createTestedStalkerPlaylist();}catch(error){fail(error);t.disabled=false;t.textContent=testedStalkerHost?.result?.authenticated===true&&Number(testedStalkerHost?.result?.expiration_timestamp)>0?"Create playlist":"Create playlist anyway";}return;}
  if(t.dataset.registerNewDevice!==undefined)openRegisterNewDevice(Number(t.dataset.registerNewDevice));
  if(t.dataset.unassignDevice&&t.dataset.unassignPlaylist)await unassignPlaylist(t.dataset.unassignDevice,t.dataset.unassignPlaylist);
  if(t.dataset.editPlaylist)editPlaylist(t.dataset.editPlaylist);
@@ -828,9 +863,9 @@ $("selectAllPlaylists").addEventListener("change",e=>{const visible=state.playli
 $("stalkerModeBtn").onclick=()=>setPlaylistMode("stalker");$("xtreamModeBtn").onclick=()=>setPlaylistMode("xtream");
 ["stalker","xtream"].forEach(type=>$(type+"ServerSearch").addEventListener("input",()=>renderServerPicker(type)));
 $("stalkerServerResults").addEventListener("click",pickServer);$("xtreamServerResults").addEventListener("click",pickServer);
-document.addEventListener("click",e=>{const clear=e.target.closest("[data-clear-server]");if(clear){const type=clear.dataset.clearServer;state.selectedServers[type]=null;$(type+"ServerSearch").value="";$(type+"HostTestStatus").textContent="Not tested";$(type+"HostTestStatus").className="host-test-status muted";renderServerPicker(type);updatePreview();}});
-function pickServer(e){const b=e.target.closest("[data-pick-server]");if(!b)return;const type=b.dataset.pickServer;state.selectedServers[type]=state.servers.find(x=>String(x.id)===String(b.dataset.serverId))||null;$(type+"ServerSearch").value="";$(type+"HostTestStatus").textContent="Not tested";$(type+"HostTestStatus").className="host-test-status muted";renderServerPicker(type);updatePreview();}
-["playlistMacs","xtreamUsername","stalkerCustomHost","xtreamCustomHost"].forEach(id=>$(id).addEventListener("input",()=>{updatePreview();if(id.includes("stalker")){$("stalkerHostTestStatus").textContent="Not tested";$("stalkerHostTestStatus").className="host-test-status muted";}if(id.includes("xtream")){$("xtreamHostTestStatus").textContent="Not tested";$("xtreamHostTestStatus").className="host-test-status muted";}}));
+document.addEventListener("click",e=>{const clear=e.target.closest("[data-clear-server]");if(clear){const type=clear.dataset.clearServer;state.selectedServers[type]=null;if(type==="stalker")testedStalkerHost=null;$(type+"ServerSearch").value="";$(type+"HostTestStatus").textContent="Not tested";$(type+"HostTestStatus").className="host-test-status muted";renderServerPicker(type);updatePreview();}});
+function pickServer(e){const b=e.target.closest("[data-pick-server]");if(!b)return;const type=b.dataset.pickServer;if(type==="stalker")testedStalkerHost=null;state.selectedServers[type]=state.servers.find(x=>String(x.id)===String(b.dataset.serverId))||null;$(type+"ServerSearch").value="";$(type+"HostTestStatus").textContent="Not tested";$(type+"HostTestStatus").className="host-test-status muted";renderServerPicker(type);updatePreview();}
+["playlistMacs","xtreamUsername","stalkerCustomHost","xtreamCustomHost"].forEach(id=>$(id).addEventListener("input",()=>{updatePreview();if(id.includes("stalker")){testedStalkerHost=null;$("stalkerHostTestStatus").textContent="Not tested";$("stalkerHostTestStatus").className="host-test-status muted";}if(id.includes("xtream")){$("xtreamHostTestStatus").textContent="Not tested";$("xtreamHostTestStatus").className="host-test-status muted";}}));
 function updatePreview(){const type=state.playlistMode;let name="Choose a saved server or enter a one-time host URL.";try{const host=getPlaylistHost(type);if(type==="stalker"){const mac=normalizeMac($("playlistMacs").value.split(/\r?\n/)[0]);if(validMac(mac))name=`${hostIdentifier(host.url)}_${mac}`;}else{const u=$("xtreamUsername").value.trim();if(u)name=`${hostIdentifier(host.url)}_${u}`;}}catch{}$("namePreview").textContent=name;}
 if("serviceWorker" in navigator)window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(()=>{}));
 boot();
