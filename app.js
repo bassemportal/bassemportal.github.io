@@ -317,6 +317,40 @@ function getPlaylistHost(type){
  return {url:raw,name:custom?"One-time host":String(saved?.name||raw)};
 }
 function setPlaylistMode(mode){state.playlistMode=mode;const stalker=mode==="stalker";$("stalkerFields").classList.toggle("hidden",!stalker);$("xtreamFields").classList.toggle("hidden",stalker);$("stalkerModeBtn").classList.toggle("primary",stalker);$("xtreamModeBtn").classList.toggle("primary",!stalker);$("createPlaylistBtn").textContent=stalker?"Create Stalker playlists":"Create Xtream playlist";$("playlistMacs").required=stalker;$("xtreamUsername").required=!stalker;$("xtreamPassword").required=!stalker;updatePreview();}
+function showStalkerHostTestResult(host,mac,result){
+ const online=result?.online===true;
+ const authenticated=result?.authenticated===true&&result?.account_result==="ACCOUNT_INFO_RECEIVED";
+ const macNotWorking=result?.account_result==="MAC_NOT_WORKING";
+ const expiry=Number(result?.expiration_timestamp);
+ const expiryDate=Number.isFinite(expiry)&&expiry>0?new Date(Math.floor(expiry)*1000).toISOString().slice(0,10).split("-").reverse().join("/"):"Not provided";
+ let title,serverLine,accountLine,detail;
+ if(!online){
+  title="Stalker server is unreachable";
+  serverLine="<b>Server:</b> Offline, unreachable, or handshake failed";
+  accountLine="<b>MAC:</b> Not verified";
+  detail=result?.error||result?.stage||"The server did not complete a successful handshake/account check.";
+ }else if(macNotWorking||!authenticated){
+  title="Server is working — MAC not authorized";
+  serverLine="<b>Server:</b> Online · Handshake successful";
+  accountLine="<b>MAC:</b> Not authorized / not working";
+  detail=macNotWorking?"The portal responded, but account information did not provide a phone/expiry value.":(result?.error||result?.account_result||"The account could not be verified.");
+ }else{
+  title="Server and MAC are working";
+  serverLine="<b>Server:</b> Online · Handshake successful";
+  accountLine="<b>MAC:</b> Authorized · Account information received";
+  detail="The Stalker account check completed successfully.";
+ }
+ const statusCode=result?.account_status||result?.handshake_status||result?.http_status||"—";
+ openModal(title,`<div class="form-grid">
+  <p class="span-2">${serverLine}</p>
+  <p class="span-2">${accountLine}</p>
+  <p class="span-2"><b>Host:</b> ${esc(host.url)}</p>
+  <p class="span-2"><b>MAC tested:</b> ${esc(colonMac(mac))}</p>
+  <p class="span-2"><b>Expiration date:</b> ${authenticated?esc(expiryDate):"Not available"}</p>
+  <p class="muted span-2">${esc(detail)} · HTTP ${esc(statusCode)}</p>
+  <div class="span-2" style="display:flex;justify-content:flex-end"><button type="button" class="btn primary" data-close-result="1">OK</button></div>
+ </div>`);
+}
 async function testPlaylistHost(type){
  const button=$(type==="stalker"?"testStalkerHostBtn":"testXtreamHostBtn");
  const status=$(type+"HostTestStatus");
@@ -324,19 +358,30 @@ async function testPlaylistHost(type){
   const host=getPlaylistHost(type);
   const url=new URL(host.url);
   if(!["http:","https:"].includes(url.protocol))throw Error("Only HTTP and HTTPS hosts can be tested.");
-  button.disabled=true;button.textContent="Testing…";status.className="host-test-status muted";status.textContent="Checking whether the host responds…";
+  button.disabled=true;button.textContent="Testing…";status.className="host-test-status muted";status.textContent=type==="stalker"?"Checking server and MAC authorization…":"Checking whether the host responds…";
+  if(type==="stalker"){
+   const mac=normalizeMac($("playlistMacs").value.split(/\r?\n/).map(x=>x.trim()).find(Boolean)||"");
+   if(!mac)throw Error("Enter a MAC address first. Test host checks the first MAC in the list.");
+   if(!validMac(mac))throw Error("The first MAC address is invalid. Enter a valid 12-character MAC.");
+   let result;
+   try{result=await callStalkerCheck(host.url,mac);}
+   catch(error){result={online:false,authenticated:false,error:error?.message||String(error),stage:"request"};}
+   showStalkerHostTestResult(host,mac,result);
+   status.className="host-test-status "+(result?.online===true&&result?.authenticated===true?"host-test-ok": "host-test-warn");
+   status.textContent=result?.online===true&&result?.authenticated===true?"Server online · MAC authorized":"Test completed · See result";
+   return;
+  }
   const controller=new AbortController();
   const timeout=setTimeout(()=>controller.abort(),10000);
   try{
-   // no-cors allows a basic reachability check without requiring the IPTV host to enable browser CORS.
-   // The opaque response deliberately does not reveal the remote HTTP status or validate credentials.
    await fetch(url.href,{method:"GET",mode:"no-cors",cache:"no-store",redirect:"follow",credentials:"omit",signal:controller.signal});
    status.className="host-test-status host-test-ok";
    status.textContent="Host responded. HTTP status and account credentials cannot be verified by this browser check.";
   }finally{clearTimeout(timeout);}
  }catch(e){
   status.className="host-test-status host-test-warn";
-  status.textContent=e?.name==="AbortError"?"Timed out after 10 seconds. Host may be slow or unreachable.":(e?.message||"Request blocked by browser or network. This does not prove the host is offline.");
+  status.textContent=e?.name==="AbortError"?"Timed out after 10 seconds. Host may be slow or unreachable.":(e?.message||"Request blocked by browser or network.");
+  if(type==="stalker"&&e?.message)openModal("Stalker test could not start",`<p>${esc(e.message)}</p>`);
  }finally{button.disabled=false;button.textContent="Test host";}
 }
 async function createPlaylists(e){
@@ -480,6 +525,7 @@ async function saveServer(e){e.preventDefault();try{const id=$("serverId").value
 async function actionClick(e){
  const t=e.target.closest("button");if(!t)return;
  if(t.dataset.playlistCheckChoice){finishPlaylistCheck(t.dataset.playlistCheckChoice==="add");return;}
+ if(t.dataset.closeResult!==undefined){closeModal();return;}
  if(t.dataset.registerNewDevice!==undefined)openRegisterNewDevice(Number(t.dataset.registerNewDevice));
  if(t.dataset.unassignDevice&&t.dataset.unassignPlaylist)await unassignPlaylist(t.dataset.unassignDevice,t.dataset.unassignPlaylist);
  if(t.dataset.editPlaylist)editPlaylist(t.dataset.editPlaylist);
