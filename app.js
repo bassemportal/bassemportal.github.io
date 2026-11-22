@@ -50,18 +50,20 @@ async function callStalkerCheck(host,mac){
  }
  return result;
 }
-const XTREAM_CHECK_FUNCTION="check-xtream";
+const XTREAM_CHECK_URL="https://xytstddhsouoeuwnuwzz.supabase.co/functions/v1/check-xtream";
 async function callXtreamCheck(host,username,password){
- const {data:{session}}=await state.sb.auth.getSession();
- if(!session?.access_token)throw Error("Your dashboard session expired. Sign in again.");
- const response=await fetch(`${String(cfg.SUPABASE_URL||"").replace(/\/$/,"")}/functions/v1/${XTREAM_CHECK_FUNCTION}`,{
-  method:"POST",
-  headers:{"Content-Type":"application/json","Authorization":`Bearer ${session.access_token}`,"apikey":cfg.SUPABASE_ANON_KEY},
-  body:JSON.stringify({host,username,password})
- });
- let result={};try{result=await response.json();}catch{}
- if(!response.ok)throw Error(result.error||`Xtream checker returned HTTP ${response.status}. Deploy the check-xtream Edge Function first.`);
- return result;
+ try{
+  const response=await fetch(XTREAM_CHECK_URL,{
+   method:"POST",
+   headers:{"Content-Type":"application/json"},
+   body:JSON.stringify({host,username,password})
+  });
+  let result={};try{result=await response.json();}catch{}
+  if(!response.ok)return {host_reachable:null,credentials_status:"unavailable",expiration_timestamp:null,message:result.error||`Xtream checker returned HTTP ${response.status}.`};
+  return result;
+ }catch(error){
+  return {host_reachable:null,credentials_status:"unavailable",expiration_timestamp:null,message:error?.message||"The Xtream checker could not be reached."};
+ }
 }
 function xtreamExpiryLabel(timestamp){
  const n=Number(timestamp);if(!Number.isFinite(n)||n<=0)return "Not provided";
@@ -82,10 +84,12 @@ function confirmXtreamCreateAnyway(result){
 }
 function showXtreamTestResult(host,username,result){
  const valid=result?.credentials_status==="valid";
+ const expiryValue=Number(result?.expiration_timestamp);
+ const hasExpiry=valid&&Number.isFinite(expiryValue)&&expiryValue>0;
  const hostText=result?.host_reachable===true?"Responding":result?.host_reachable===false?"Probe failed / unreachable":"Unknown";
  const accountText=valid?"Credentials accepted":result?.credentials_status==="invalid"?"Credentials rejected":"Could not verify credentials";
- const expiry=valid?xtreamExpiryLabel(result?.expiration_timestamp):"Not available";
- const title=valid?"Xtream account verified":result?.credentials_status==="invalid"?"Xtream credentials rejected":"Xtream account could not be verified";
+ const expiry=hasExpiry?xtreamExpiryLabel(expiryValue):"Not available";
+ const title=hasExpiry?"Xtream account verified":result?.credentials_status==="invalid"?"Xtream credentials rejected":"Xtream account could not be fully verified";
  openModal(title,`<div class="form-grid">
   <p class="span-2"><b>Host status:</b> ${esc(hostText)}</p>
   <p class="span-2"><b>Account status:</b> ${esc(accountText)}</p>
@@ -94,7 +98,10 @@ function showXtreamTestResult(host,username,result){
   <p class="span-2"><b>Expiration date:</b> ${esc(expiry)}</p>
   ${result?.message?`<p class="muted span-2">${esc(result.message)}</p>`:""}
   <p class="muted span-2">The host probe and credential check are independent. A failed host probe does not automatically mean the credentials are invalid.</p>
-  <div class="span-2" style="display:flex;justify-content:flex-end"><button type="button" class="btn" data-close-result="1">OK</button></div>
+  <div class="span-2" style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap">
+   <button type="button" class="btn" data-close-result="1">Cancel</button>
+   ${!hasExpiry?'<button type="button" class="btn primary" data-create-tested-xtream="1">Create anyway</button>':''}
+  </div>
  </div>`);
 }
 function finishPlaylistCheck(accepted){
@@ -433,6 +440,34 @@ async function createTestedStalkerPlaylist(){
  msg(`Stalker playlist created from the previous test${expirationDate?` · Expiration: ${new Date(expirationDate*1000).toISOString().slice(0,10)}`:" · No expiration date (null)"}${devices.length?` · Assignment links processed: ${assigned}`:""}${assignError?` · Assignment error: ${assignError.message}`:""}`,!!assignError);
 }
 
+async function createTestedXtreamPlaylist(){
+ const tested=testedXtreamHost;
+ if(!tested)throw Error("Run Test host first.");
+ const currentHost=getPlaylistHost("xtream").url;
+ const username=$("xtreamUsername").value.trim(),password=$("xtreamPassword").value;
+ if(currentHost!==tested.hostUrl||username!==tested.username||password!==tested.password)throw Error("The host or Xtream credentials changed after testing. Run Test host again.");
+ const name=`${hostIdentifier(currentHost)}_${username}`;
+ if(state.playlists.some(p=>p.name===name))throw Error("A playlist named "+name+" already exists.");
+ const devices=selectedValues($("playlistDevices"));
+ const expiry=Number(tested.result?.expiration_timestamp);
+ const verified=tested.result?.credentials_status==="valid"&&Number.isFinite(expiry)&&expiry>0;
+ const url="xc:"+JSON.stringify({h:currentHost,u:username,p:password,o:"ts"});
+ const metadata={...META,is_expanded:0,is_expanded_in_movies:0,is_expanded_in_series:0,stalker_token:null,expiration_date:verified?Math.floor(expiry):null};
+ const {data,error}=await state.sb.from("playlists").insert([{name,url,metadata}]).select("id,name");
+ if(error)throw error;
+ let assigned=0,assignError=null;
+ if(devices.length){
+  const links=[];for(const playlist of data)for(const mac of devices)links.push({device_mac:mac,playlist_id:playlist.id});
+  const result=await state.sb.from("playlist_assignments").upsert(links,{onConflict:"device_mac,playlist_id",ignoreDuplicates:true});
+  assignError=result.error;assigned=links.length;
+ }
+ testedXtreamHost=null;
+ $("xtreamUsername").value="";$("xtreamPassword").value="";$("xtreamCustomHost").value="";
+ [...$("playlistDevices").options].forEach(option=>option.selected=false);
+ closeModal();await loadData();
+ msg(`Xtream playlist created${verified?` · Expiration: ${xtreamExpiryLabel(expiry)}`:" · No expiration date (null)"}${devices.length?` · Assignment links processed: ${assigned}`:""}${assignError?` · Assignment error: ${assignError.message}`:""}`,!!assignError);
+}
+
 async function testPlaylistHost(type){
  const button=$(type==="stalker"?"testStalkerHostBtn":"testXtreamHostBtn");
  const status=$(type+"HostTestStatus");
@@ -679,6 +714,7 @@ async function actionClick(e){
  if(t.dataset.playlistCheckChoice){finishPlaylistCheck(t.dataset.playlistCheckChoice==="add");return;}
  if(t.dataset.closeResult!==undefined){closeModal();return;}
  if(t.dataset.createTestedStalker!==undefined){try{t.disabled=true;t.textContent="Creating…";await createTestedStalkerPlaylist();}catch(error){fail(error);t.disabled=false;t.textContent=testedStalkerHost?.result?.authenticated===true&&Number(testedStalkerHost?.result?.expiration_timestamp)>0?"Create playlist":"Create playlist anyway";}return;}
+ if(t.dataset.createTestedXtream!==undefined){try{t.disabled=true;t.textContent="Creating…";await createTestedXtreamPlaylist();}catch(error){fail(error);t.disabled=false;t.textContent="Create anyway";}return;}
  if(t.dataset.registerNewDevice!==undefined)openRegisterNewDevice(Number(t.dataset.registerNewDevice));
  if(t.dataset.unassignDevice&&t.dataset.unassignPlaylist)await unassignPlaylist(t.dataset.unassignDevice,t.dataset.unassignPlaylist);
  if(t.dataset.editPlaylist)editPlaylist(t.dataset.editPlaylist);
