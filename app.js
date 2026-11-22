@@ -3,6 +3,7 @@
 const cfg=window.BASSEM_CONFIG||{};
 const $=id=>document.getElementById(id);
 let playlistCheckResolver = null;
+let playlistBatchResolver = null;
 let testedStalkerHost = null;
 const state={sb:null,user:null,profile:null,idleTimer:null,lastActivity:0,playlistMode:"stalker",selectedServers:{stalker:null,xtream:null},servers:[],playlists:[],devices:[],assignments:[],dashboardUsers:[],loginHistory:[],page:"overview",selectedPlaylistIds:new Set(),selectedDeviceMacs:new Set(),selectedDeviceIds:new Set(),selectedAssignmentKeys:new Set(),playlistAnchor:null,newDevices:[]};
 const META={
@@ -295,7 +296,7 @@ async function unassignPlaylist(deviceMac, playlistId){
 }
 function refreshSelectionCount(){const np=state.selectedPlaylistIds.size,nd=state.selectedDeviceMacs.size;$("assignmentCount").textContent=`${np} playlists × ${nd} devices = ${np*nd} possible links`;const visible=state.playlists.filter(p=>p.name.toLowerCase().includes(($("playlistSearch").value||"").toLowerCase()));const all=visible.length>0&&visible.every(p=>state.selectedPlaylistIds.has(String(p.id)));const ctl=$("selectAllPlaylists");if(ctl){ctl.checked=all;ctl.indeterminate=!all&&visible.some(p=>state.selectedPlaylistIds.has(String(p.id)));}}
 function openModal(title,html){$("modalTitle").textContent=title;$("modalBody").innerHTML=html;$("modal").classList.remove("hidden");}
-function closeModal(){if(playlistCheckResolver){const resolve=playlistCheckResolver;playlistCheckResolver=null;resolve(false);} $("modal").classList.add("hidden");}
+function closeModal(){if(playlistCheckResolver){const resolve=playlistCheckResolver;playlistCheckResolver=null;resolve(false);}if(playlistBatchResolver){const resolve=playlistBatchResolver;playlistBatchResolver=null;resolve(null);} $("modal").classList.add("hidden");}
 function serverRows(type){return state.servers.filter(s=>Number(s.enabled)!==0&&String(s.type||"").toLowerCase()===type);}
 function renderServerPicker(type){
  const search=$(type+"ServerSearch"),results=$(type+"ServerResults"),selected=$(type+"ServerSelected"),hidden=$(type+"ServerId");
@@ -418,6 +419,51 @@ async function testPlaylistHost(type){
   if(type==="stalker"&&e?.message)openModal("Stalker test could not start",`<p>${esc(e.message)}</p>`);
  }finally{button.disabled=false;button.textContent="Test host";}
 }
+function renderStalkerBatchProgress(done,total,current,results){
+ const good=results.filter(x=>x.kind==="verified").length;
+ const other=results.length-good;
+ const pct=total?Math.round(done/total*100):100;
+ $("modalTitle").textContent="Checking Stalker MAC addresses";
+ $("modalBody").innerHTML=`<div class="form-grid">
+  <div class="span-2" style="display:flex;justify-content:space-between;align-items:baseline;gap:12px"><b>Checking MACs…</b><strong style="font-size:22px">${pct}%</strong></div>
+  <div class="span-2" style="height:10px;background:var(--border,#e5e7eb);border-radius:99px;overflow:hidden"><div style="height:100%;width:${pct}%;background:var(--success,#16a34a);transition:width .2s;border-radius:99px"></div></div>
+  <p class="muted span-2">${done} / ${total} MAC addresses checked${current?` · Currently checking ${esc(colonMac(current))}`:""}</p>
+  <div class="span-2" style="display:flex;justify-content:space-between;gap:12px"><span>Authorized with expiry</span><b>${good}</b></div>
+  <div class="span-2" style="display:flex;justify-content:space-between;gap:12px"><span>Other results</span><b>${other}</b></div>
+  <p class="muted span-2">Please wait. No playlists are inserted during checking.</p>
+ </div>`;
+ $("modal").classList.remove("hidden");
+}
+function showStalkerBatchReview(results,duplicates){
+ const good=results.filter(x=>x.kind==="verified").length;
+ const withNoExpiry=results.filter(x=>x.kind==="no_expiry").length;
+ const failed=results.filter(x=>x.kind==="failed").length;
+ const rows=results.map((r,i)=>{
+  const label=r.kind==="verified"?`Authorized · Expires ${esc(r.expiryLabel)}`:r.kind==="no_expiry"?"Authorized · Expiration date not provided":`Not verified · ${esc(r.reason)}`;
+  const selected=r.kind==="verified";
+  const expiry=r.kind==="verified"?r.expirationDate:null;
+  return `<label class="span-2" style="display:flex;align-items:flex-start;gap:10px;padding:10px;border:1px solid var(--border,#ddd);border-radius:9px;cursor:pointer"><input type="checkbox" data-batch-select="${i}" ${selected?"checked":""} style="margin-top:3px"><span style="min-width:0;flex:1"><b>${esc(colonMac(r.mac))}</b><small class="muted" style="display:block">${label}${r.kind!=="verified"?" · Will be inserted with expiration_date = null if selected":""}</small></span><small>${selected?"Selected":"Optional"}</small></label>`;
+ }).join("");
+ const duplicateNote=duplicates.length?`<p class="muted span-2">${duplicates.length} playlist(s) already existed and will be skipped: ${duplicates.map(esc).join(", ")}</p>`:"";
+ return new Promise(resolve=>{
+  playlistBatchResolver=resolve;
+  openModal("Review Stalker playlist results",`<div class="form-grid">
+   <p class="span-2">All checks are complete. Choose which playlists to insert. Authorized MACs with an expiry date are selected automatically; other results are optional and will be inserted with a null expiry.</p>
+   <div class="span-2" style="display:flex;gap:14px;flex-wrap:wrap"><span style="color:var(--success,#16a34a)"><b>${good}</b> authorized with expiry</span><span><b>${withNoExpiry}</b> authorized without expiry</span><span><b>${failed}</b> not verified</span></div>
+   ${rows||'<p class="muted span-2">No new MACs to insert.</p>'}
+   ${duplicateNote}
+   <div class="span-2" style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;margin-top:8px"><button type="button" class="btn" data-batch-review="cancel">Cancel all</button><button type="button" class="btn primary" data-batch-review="insert">Insert selected playlists</button></div>
+  </div>`);
+ });
+}
+function finishStalkerBatchReview(insert){
+ const resolve=playlistBatchResolver;
+ if(!resolve)return;
+ const selected=insert?[...$("modalBody").querySelectorAll("input[data-batch-select]:checked")].map(x=>Number(x.dataset.batchSelect)):null;
+ playlistBatchResolver=null;
+ $("modal").classList.add("hidden");
+ resolve(selected);
+}
 async function createPlaylists(e){
  e.preventDefault();
  try{
@@ -429,33 +475,32 @@ async function createPlaylists(e){
    const macs=[...new Set($("playlistMacs").value.split(/\r?\n/).map(normalizeMac).filter(Boolean))];
    if(!macs.length)throw Error("Enter at least one MAC address.");
    const invalid=macs.filter(m=>!validMac(m));if(invalid.length)throw Error("Invalid MAC address(es): "+invalid.join(", "));
-   const host=hostIdentifier(server.url);
-   const pending=[];
-   // Verify every MAC before inserting anything. Cancel on any failed verification
-   // leaves the entire batch uninserted.
-   for(const mac of macs){
-    const name=`${host}_${mac}`;
-    if(existing.has(name))continue;
-    existing.add(name);
-    let checkResult;
-    try{
-     checkResult=await callStalkerCheck(server.url,mac);
-    }catch(error){
-     checkResult={online:false,authenticated:false,error:error?.message||String(error),stage:"request"};
-    }
-    const verified=checkResult?.online===true&&checkResult?.authenticated===true&&checkResult?.account_result==="ACCOUNT_INFO_RECEIVED";
-    let expirationDate=null;
-    if(verified){
-     const candidate=Number(checkResult.expiration_timestamp);
-     if(Number.isFinite(candidate)&&candidate>0)expirationDate=Math.floor(candidate);
-    }else{
-     const addAnyway=await confirmAddUnverifiedPlaylist(name,checkResult);
-     if(!addAnyway)throw Error("Playlist insertion cancelled. No playlists were inserted.");
-     expirationDate=null;
-    }
-    pending.push({name,url:playlistPayload(server,mac),metadata:{...META,is_expanded:0,is_expanded_in_movies:0,is_expanded_in_series:0,expiration_date:expirationDate}});
+   const host=hostIdentifier(server.url),toCheck=[],duplicates=[];
+   for(const mac of macs){const name=`${host}_${mac}`;if(existing.has(name)){duplicates.push(name);continue;}existing.add(name);toCheck.push(mac);}
+   if(!toCheck.length)throw Error("All generated playlist names already exist.");
+   const checked=[];
+   renderStalkerBatchProgress(0,toCheck.length,toCheck[0],checked);
+   for(let i=0;i<toCheck.length;i++){
+    const mac=toCheck[i],name=`${host}_${mac}`;
+    let result;
+    try{result=await callStalkerCheck(server.url,mac);}
+    catch(error){result={online:false,authenticated:false,error:error?.message||String(error),stage:"request"};}
+    const verified=result?.online===true&&result?.authenticated===true&&result?.account_result==="ACCOUNT_INFO_RECEIVED";
+    const candidate=Number(result?.expiration_timestamp);
+    const hasExpiry=verified&&Number.isFinite(candidate)&&candidate>0;
+    let kind="failed",reason=result?.account_result||result?.error||result?.stage||"Portal could not be verified";
+    if(hasExpiry)kind="verified";
+    else if(verified){kind="no_expiry";reason="Expiration date not provided";}
+    checked.push({mac,name,result,kind,reason,expirationDate:hasExpiry?Math.floor(candidate):null,expiryLabel:hasExpiry?new Date(candidate*1000).toISOString().slice(0,10):""});
+    renderStalkerBatchProgress(i+1,toCheck.length,toCheck[i+1]||null,checked);
    }
-   rows.push(...pending);
+   const selected=await showStalkerBatchReview(checked,duplicates);
+   if(selected===null)throw Error("Playlist creation cancelled. No playlists were inserted.");
+   for(const index of selected){
+    const item=checked[index];if(!item)continue;
+    rows.push({name:item.name,url:playlistPayload(server,item.mac),metadata:{...META,is_expanded:0,is_expanded_in_movies:0,is_expanded_in_series:0,expiration_date:item.kind==="verified"?item.expirationDate:null}});
+   }
+   if(!rows.length)throw Error("No playlists were selected. Nothing was inserted.");
   }else{
    const username=$("xtreamUsername").value.trim(),password=$("xtreamPassword").value;
    if(!username||!password)throw Error("Enter both Xtream username and password.");
@@ -466,7 +511,6 @@ async function createPlaylists(e){
    const metadata={...META,is_expanded:0,is_expanded_in_movies:0,is_expanded_in_series:0,stalker_token:null};
    rows.push({name,url,metadata});
   }
-  if(!rows.length)throw Error("All generated playlist names already exist.");
   const {data,error}=await state.sb.from("playlists").insert(rows).select("id,name");
   if(error)throw error;
   let assigned=0,assignError=null;
@@ -558,6 +602,7 @@ function editServer(id){const s=state.servers.find(x=>String(x.id)===String(id))
 async function saveServer(e){e.preventDefault();try{const id=$("serverId").value;const row={name:$("serverName").value.trim(),url:$("serverUrl").value.trim(),type:$("serverType").value,sort_order:Number($("serverSort").value||0)};const r=id?await state.sb.from("servers").update(row).eq("id",id):await state.sb.from("servers").insert(row);if(r.error)throw r.error;$("serverForm").reset();$("serverId").value="";$("serverSort").value="0";$("serverSubmit").textContent="Add server";$("serverCancel").classList.add("hidden");await loadData();msg(id?"Server updated.":"Server added.");}catch(e){fail(e);}}
 async function actionClick(e){
  const t=e.target.closest("button");if(!t)return;
+ if(t.dataset.batchReview){finishStalkerBatchReview(t.dataset.batchReview==="insert");return;}
  if(t.dataset.playlistCheckChoice){finishPlaylistCheck(t.dataset.playlistCheckChoice==="add");return;}
  if(t.dataset.closeResult!==undefined){closeModal();return;}
  if(t.dataset.createTestedStalker!==undefined){try{t.disabled=true;t.textContent="Creating…";await createTestedStalkerPlaylist();}catch(error){fail(error);t.disabled=false;t.textContent=testedStalkerHost?.result?.authenticated===true&&Number(testedStalkerHost?.result?.expiration_timestamp)>0?"Create playlist":"Create playlist anyway";}return;}
