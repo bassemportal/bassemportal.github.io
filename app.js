@@ -56,11 +56,19 @@ function finishPlaylistCheck(accepted){
 function confirmAddUnverifiedPlaylist(name,result){
  const details=result?.account_result||result?.error||result?.stage||"Portal could not be verified";
  const status=result?.account_status||result?.handshake_status||result?.http_status||"No HTTP response";
+ const hostDown=result?.online===false;
+ const macNotWorking=result?.account_result==="MAC_NOT_WORKING";
+ const modalTitle=hostDown?"Stalker host appears down":macNotWorking?"Stalker MAC is not working":"Stalker account could not be verified";
+ const explanation=hostDown
+  ?"The Stalker host did not respond successfully (or its handshake failed). It may be down or unreachable."
+  :macNotWorking
+   ?"The host responded, but the account information did not contain a phone/expiry value. This MAC is being treated as not working."
+   :"The Stalker host/account check did not return a verified online result.";
  return new Promise(resolve=>{
   playlistCheckResolver=resolve;
-  openModal("Playlist could not be verified",`
+  openModal(modalTitle,`
    <div class="form-grid">
-    <p class="span-2">The Stalker host/account check did not return a verified online result for <b>${esc(name)}</b>.</p>
+    <p class="span-2">${explanation} Playlist: <b>${esc(name)}</b>.</p>
     <p class="muted span-2">Result: ${esc(details)} · HTTP ${esc(status)}</p>
     <p class="span-2">If you continue, this playlist will be inserted with no expiration date (<b>null</b>). Otherwise, cancel to insert nothing.</p>
     <div class="span-2" style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap">
