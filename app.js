@@ -50,6 +50,36 @@ async function callStalkerCheck(host,mac){
  }
  return result;
 }
+async function callStalkerBatch(host,macs,onResult){
+ const response=await fetch(STALKER_CHECK_URL,{
+  method:"POST",
+  headers:{"Content-Type":"application/json"},
+  body:JSON.stringify({host,macs:macs.map(colonMac)})
+ });
+ if(!response.ok){
+  let payload={};try{payload=await response.json();}catch{}
+  throw Error(payload.error||payload.message||`Stalker batch checker failed (${response.status}).`);
+ }
+ if(!response.body?.getReader)throw Error("This browser does not support the streamed Stalker batch response.");
+ const reader=response.body.getReader(),decoder=new TextDecoder();
+ let buffer="",results=[];
+ const consumeLine=line=>{
+  const value=line.trim();if(!value)return;
+  const item=JSON.parse(value);results.push(item);
+  if(typeof onResult==="function")onResult(item,results.length);
+ };
+ while(true){
+  const {value,done}=await reader.read();
+  if(done)break;
+  buffer+=decoder.decode(value,{stream:true});
+  const lines=buffer.split("\\n");buffer=lines.pop()||"";
+  for(const line of lines)consumeLine(line);
+ }
+ buffer+=decoder.decode();
+ if(buffer.trim())consumeLine(buffer);
+ if(results.length!==macs.length)throw Error(`The Stalker batch returned ${results.length} of ${macs.length} MAC results.`);
+ return results;
+}
 const XTREAM_CHECK_URL="https://xytstddhsouoeuwnuwzz.supabase.co/functions/v1/check-xtream";
 async function callXtreamCheck(host,username,password){
  try{
@@ -513,6 +543,15 @@ async function testPlaylistHost(type){
   if(type==="stalker"&&e?.message)openModal("Stalker test could not start",`<p>${esc(e.message)}</p>`);
  }finally{button.disabled=false;button.textContent="Test host";}
 }
+function makeStalkerBatchReviewItem(mac,name,result){
+ const verified=result?.online===true&&result?.authenticated===true&&result?.account_result==="ACCOUNT_INFO_RECEIVED";
+ const candidate=Number(result?.expiration_timestamp);
+ const hasExpiry=verified&&Number.isFinite(candidate)&&candidate>0;
+ let kind="failed",reason=result?.account_result||result?.error||result?.stage||"Portal could not be verified";
+ if(hasExpiry)kind="verified";
+ else if(verified){kind="no_expiry";reason="Expiration date not provided";}
+ return {mac,name,result,kind,reason,expirationDate:hasExpiry?Math.floor(candidate):null,expiryLabel:hasExpiry?new Date(candidate*1000).toISOString().slice(0,10):""};
+}
 function renderStalkerBatchProgress(done,total,current,results){
  const good=results.filter(x=>x.kind==="verified").length;
  const other=results.length-good;
@@ -524,7 +563,7 @@ function renderStalkerBatchProgress(done,total,current,results){
   <p class="muted span-2">${done} / ${total} MAC addresses checked${current?` · Currently checking ${esc(colonMac(current))}`:""}</p>
   <div class="span-2" style="display:flex;justify-content:space-between;gap:12px"><span>Authorized with expiry</span><b>${good}</b></div>
   <div class="span-2" style="display:flex;justify-content:space-between;gap:12px"><span>Other results</span><b>${other}</b></div>
-  <p class="muted span-2">Please wait. No playlists are inserted during checking.</p>
+  <p class="muted span-2">One batch request is checking every MAC. No playlists are inserted until review.</p>
  </div>`;
  $("modal").classList.remove("hidden");
 }
@@ -572,22 +611,34 @@ async function createPlaylists(e){
    const host=hostIdentifier(server.url),toCheck=[],duplicates=[];
    for(const mac of macs){const name=`${host}_${mac}`;if(existing.has(name)){duplicates.push(name);continue;}existing.add(name);toCheck.push(mac);}
    if(!toCheck.length)throw Error("All generated playlist names already exist.");
-   const checked=[];
+   let checked=[];
+   const batchResults=[];
    renderStalkerBatchProgress(0,toCheck.length,toCheck[0],checked);
-   for(let i=0;i<toCheck.length;i++){
-    const mac=toCheck[i],name=`${host}_${mac}`;
-    let result;
-    try{result=await callStalkerCheck(server.url,mac);}
-    catch(error){result={online:false,authenticated:false,error:error?.message||String(error),stage:"request"};}
-    const verified=result?.online===true&&result?.authenticated===true&&result?.account_result==="ACCOUNT_INFO_RECEIVED";
-    const candidate=Number(result?.expiration_timestamp);
-    const hasExpiry=verified&&Number.isFinite(candidate)&&candidate>0;
-    let kind="failed",reason=result?.account_result||result?.error||result?.stage||"Portal could not be verified";
-    if(hasExpiry)kind="verified";
-    else if(verified){kind="no_expiry";reason="Expiration date not provided";}
-    checked.push({mac,name,result,kind,reason,expirationDate:hasExpiry?Math.floor(candidate):null,expiryLabel:hasExpiry?new Date(candidate*1000).toISOString().slice(0,10):""});
-    renderStalkerBatchProgress(i+1,toCheck.length,toCheck[i+1]||null,checked);
+   try{
+    // One browser-to-Supabase request streams one result per MAC. Each MAC
+    // still gets its own handshake, account-info request, and expiry lookup.
+    await callStalkerBatch(server.url,toCheck,(item,done)=>{
+     batchResults.push(item);
+     const liveResults=batchResults.map(x=>{
+      const mac=normalizeMac(x.mac);
+      return makeStalkerBatchReviewItem(mac,`${host}_${mac}`,x);
+     });
+     renderStalkerBatchProgress(done,toCheck.length,toCheck[done]||null,liveResults);
+    });
+   }catch(error){
+    // If the batch request stops part-way through, keep completed results and
+    // create a failed review result for each MAC that did not return.
+    const received=new Set(batchResults.map(item=>normalizeMac(item.mac)));
+    for(const mac of toCheck){
+     if(!received.has(mac))batchResults.push({mac:colonMac(mac),online:false,authenticated:false,error:error?.message||"Batch request failed",stage:"batch_request"});
+    }
    }
+   const resultByMac=new Map(batchResults.map(item=>[normalizeMac(item.mac),item]));
+   checked=toCheck.map(mac=>{
+    const result=resultByMac.get(mac)||{online:false,authenticated:false,error:"No result returned for this MAC",stage:"batch_response"};
+    return makeStalkerBatchReviewItem(mac,`${host}_${mac}`,result);
+   });
+   renderStalkerBatchProgress(checked.length,toCheck.length,null,checked);
    const selected=await showStalkerBatchReview(checked,duplicates);
    if(selected===null)throw Error("Playlist creation cancelled. No playlists were inserted.");
    for(const index of selected){
