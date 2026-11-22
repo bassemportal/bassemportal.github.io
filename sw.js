@@ -1,4 +1,4 @@
-const CACHE = "bassem-tv-admin-v17";
+const CACHE = "bassem-tv-admin-v18";
 const ASSETS = [
   "./",
   "./index.html",
